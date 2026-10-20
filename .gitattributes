@@ -1,0 +1,9 @@
+* text=auto
+
+# Shell scripts must keep LF endings to run inside Linux containers and on macOS/Linux.
+mvnw text eol=lf
+*.sh text eol=lf
+
+# Windows batch scripts need CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
