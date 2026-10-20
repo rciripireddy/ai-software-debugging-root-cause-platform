@@ -22,14 +22,14 @@ export const MONITORED_SERVICES: MonitoredService[] = [
     id: 'ingestion-service',
     name: 'Ingestion Service',
     runtime: 'Java 21 · Spring Boot',
-    description: 'Will receive application logs and error events.',
+    description: 'Receives and stores application logs and error events.',
     healthPath: '/api/ingestion/actuator/health',
   },
   {
     id: 'incident-service',
     name: 'Incident Service',
     runtime: 'Java 21 · Spring Boot',
-    description: 'Will group related errors into incidents.',
+    description: 'Creates and serves incidents built from error events.',
     healthPath: '/api/incident/actuator/health',
   },
   {

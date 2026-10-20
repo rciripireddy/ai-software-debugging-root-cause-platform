@@ -4,14 +4,14 @@ import { Notice } from '../components/Notice'
 import { PageHeader } from '../components/PageHeader'
 
 const METRICS = [
-  { label: 'Events ingested (24h)', availableIn: 'Phase 2' },
-  { label: 'Open incidents', availableIn: 'Phase 3' },
-  { label: 'Recurring failures', availableIn: 'Phase 3' },
-  { label: 'Analyzed incidents', availableIn: 'Phase 4' },
+  { label: 'Events ingested (24h)', availableIn: 'Phase 5' },
+  { label: 'Open incidents', availableIn: 'Phase 5' },
+  { label: 'Recurring failures', availableIn: 'Phase 5' },
+  { label: 'Analyzed incidents', availableIn: 'Phase 5' },
 ]
 
 const PIPELINE_STAGES = [
-  { name: 'Log ingestion API', component: 'ingestion-service', state: 'Planned · Phase 2' },
+  { name: 'Log ingestion API', component: 'ingestion-service', state: 'REST API implemented' },
   { name: 'Event streaming', component: 'Kafka (KRaft)', state: 'Broker provisioned' },
   { name: 'Incident correlation', component: 'incident-service', state: 'Planned · Phase 3' },
   { name: 'Root cause analysis', component: 'analysis-service', state: 'Planned · Phase 4' },

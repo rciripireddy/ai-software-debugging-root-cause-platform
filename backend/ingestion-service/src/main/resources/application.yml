@@ -1,9 +1,32 @@
 spring:
   application:
     name: ingestion-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:rootcause}
+    username: ${DB_USERNAME:rootcause}
+    password: ${DB_PASSWORD:}
+    hikari:
+      # Fail fast when the database is unreachable, so readiness reports DOWN promptly.
+      connection-timeout: 5000 # milliseconds
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    schemas: ingestion
 
 server:
   port: ${SERVER_PORT:8081}
+
+logging:
+  pattern:
+    # Plain-text format for local development. Docker enables JSON (ECS) output instead,
+    # see LOGGING_STRUCTURED_FORMAT_CONSOLE in docker-compose.yml.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{correlationId:-}] %-40.40logger{39} : %m %kvp%n%wEx"
 
 management:
   endpoints:
@@ -14,6 +37,9 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        readiness:
+          include: readinessState,db
   info:
     env:
       enabled: true

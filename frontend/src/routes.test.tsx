@@ -39,7 +39,7 @@ describe('dashboard navigation', () => {
 
     await user.click(screen.getByRole('link', { name: /Error Monitoring/ }))
     expect(screen.getByRole('heading', { level: 1, name: 'Error Monitoring' })).toBeInTheDocument()
-    expect(screen.getByText('No error events yet')).toBeInTheDocument()
+    expect(screen.getByText('Not connected to the error data yet')).toBeInTheDocument()
 
     await user.click(screen.getByRole('link', { name: /Root Cause Analysis/ }))
     expect(screen.getByRole('heading', { level: 1, name: 'Root Cause Analysis' })).toBeInTheDocument()

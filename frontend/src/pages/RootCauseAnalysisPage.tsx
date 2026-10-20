@@ -29,8 +29,9 @@ export function RootCauseAnalysisPage() {
       <div className="two-column two-column--wide-right">
         <section className="card" aria-labelledby="incident-queue-heading">
           <h2 id="incident-queue-heading">Incident queue</h2>
-          <EmptyState icon={ListChecks} title="No incidents to analyze">
-            Incidents will appear here after incident correlation is implemented in Phase 3.
+          <EmptyState icon={ListChecks} title="Not connected to the incident data yet">
+            Incidents can be created through the incident API, but this page is not connected to it
+            yet (planned for Phase 5).
           </EmptyState>
         </section>
 

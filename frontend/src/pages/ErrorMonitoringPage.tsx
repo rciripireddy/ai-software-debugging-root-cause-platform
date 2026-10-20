@@ -37,8 +37,9 @@ export function ErrorMonitoringPage() {
             </thead>
           </table>
         </div>
-        <EmptyState icon={Inbox} title="No error events yet">
-          Error events will be listed here once the log ingestion pipeline is implemented in Phase 2.
+        <EmptyState icon={Inbox} title="Not connected to the error data yet">
+          The ingestion API already stores error events, but this page is not connected to it yet
+          (planned for Phase 5).
         </EmptyState>
       </section>
     </>

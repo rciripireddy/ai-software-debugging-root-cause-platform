@@ -2,48 +2,63 @@ package com.rootcauseplatform.ingestion;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@Import(TestcontainersConfiguration.class)
 class IngestionServiceApplicationTests {
-
-    private final HttpClient httpClient = HttpClient.newHttpClient();
 
     @Value("${local.server.port}")
     private int port;
 
-    @Test
-    void healthEndpointReportsUp() throws Exception {
-        HttpResponse<String> response = get("/actuator/health");
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
-        assertThat(response.statusCode()).isEqualTo(200);
-        assertThat(response.body()).contains("\"status\":\"UP\"");
+    private ApiClient api;
+
+    @BeforeEach
+    void setUp() {
+        api = new ApiClient(port);
     }
 
     @Test
-    void livenessAndReadinessProbesAreExposed() throws Exception {
-        assertThat(get("/actuator/health/liveness").statusCode()).isEqualTo(200);
-        assertThat(get("/actuator/health/readiness").statusCode()).isEqualTo(200);
+    void healthEndpointReportsUp() {
+        ApiClient.Response response = api.get("/actuator/health");
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(response.json().get("status").asString()).isEqualTo("UP");
     }
 
     @Test
-    void infoEndpointIdentifiesService() throws Exception {
-        HttpResponse<String> response = get("/actuator/info");
-
-        assertThat(response.statusCode()).isEqualTo(200);
-        assertThat(response.body()).contains("\"name\":\"ingestion-service\"");
+    void livenessAndReadinessProbesAreExposed() {
+        assertThat(api.get("/actuator/health/liveness").status()).isEqualTo(200);
+        assertThat(api.get("/actuator/health/readiness").status()).isEqualTo(200);
     }
 
-    private HttpResponse<String> get(String path) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    @Test
+    void infoEndpointIdentifiesService() {
+        ApiClient.Response response = api.get("/actuator/info");
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(response.json().at("/app/name").asString()).isEqualTo("ingestion-service");
+    }
+
+    @Test
+    void flywayCreatesTheIngestionSchema() {
+        assertThat(jdbcTemplate.queryForList(
+                "select table_name from information_schema.tables where table_schema = 'ingestion' order by 1",
+                String.class))
+                .containsExactly("applications", "error_events", "flyway_schema_history");
+        assertThat(jdbcTemplate.queryForList(
+                "select version from ingestion.flyway_schema_history where success and version is not null",
+                String.class))
+                .contains("1");
     }
 }

@@ -14,5 +14,4 @@ WORKDIR /app
 COPY --from=build /workspace/target/*.jar app.jar
 USER app
 EXPOSE 8082
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]

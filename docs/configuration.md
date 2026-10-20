@@ -28,12 +28,36 @@ Compose refuses to start until it is set.
 Changing `POSTGRES_*` values after the first start has no effect on the existing database volume.
 Run `docker compose down -v` to recreate it (this deletes local data).
 
+## Spring Boot services
+
+Both Spring Boot services read these environment variables. Docker Compose sets them from
+`.env`; when running a service directly on the host, set at least `DB_PASSWORD`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DB_HOST` | `localhost` | PostgreSQL host (`postgres` inside Docker Compose) |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_NAME` | `rootcause` | Database name |
+| `DB_USERNAME` | `rootcause` | Database user |
+| `DB_PASSWORD` | *(empty)* | Database password. No default is stored in source files |
+| `SERVER_PORT` | `8081` / `8082` | HTTP port of ingestion-service / incident-service |
+| `LOGGING_STRUCTURED_FORMAT_CONSOLE` | *(unset)* | `ecs` for JSON logs. Docker Compose sets it; unset gives plain-text logs |
+
+Other settings in each `application.yml`:
+
+- Flyway migrates the service's schema (`ingestion` or `incident`) on startup.
+- Hibernate validates the entity mappings against the schema (`ddl-auto: validate`) and never
+  changes the schema itself.
+- The connection pool waits at most 5 seconds for a database connection, so an unreachable
+  database is reported quickly: API calls return `503` and readiness reports `DOWN`.
+- Actuator exposes only `health` and `info`. The readiness group includes the database check.
+
 ## Service configuration
 
 | Service | File | Notable settings |
 | --- | --- | --- |
-| ingestion-service | `backend/ingestion-service/src/main/resources/application.yml` | `SERVER_PORT` (default `8081`); Actuator exposes `health` and `info` only |
-| incident-service | `backend/incident-service/src/main/resources/application.yml` | `SERVER_PORT` (default `8082`); Actuator exposes `health` and `info` only |
+| ingestion-service | `backend/ingestion-service/src/main/resources/application.yml` | See above |
+| incident-service | `backend/incident-service/src/main/resources/application.yml` | See above |
 | analysis-service | `analysis-service/Dockerfile` | Listens on port `8000` |
 | frontend | `frontend/vite.config.ts`, `frontend/nginx.conf` | API proxy routes for development and Docker |
 
