@@ -59,18 +59,28 @@ class IncidentServiceApplicationTests {
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'incident' order by 1",
                 String.class))
-                .containsExactly("flyway_schema_history", "incident_events", "incidents");
+                .containsExactly("flyway_schema_history", "incident_events", "incidents", "processed_events");
+    }
+
+    @Test
+    void incidentTablesHaveNoForeignKeysIntoTheIngestionSchema() {
+        Integer crossSchemaForeignKeys = jdbcTemplate.queryForObject("""
+                select count(*) from pg_constraint
+                where contype = 'f'
+                  and connamespace = 'incident'::regnamespace
+                  and confrelid::regclass::text like 'ingestion.%'""", Integer.class);
+
+        assertThat(crossSchemaForeignKeys).isZero();
     }
 
     @Test
     void databaseAllowsOnlyOneUnresolvedIncidentPerErrorAndApplication() {
-        TestData data = new TestData(jdbcTemplate);
-        UUID applicationId = data.application("schema-test-" + UUID.randomUUID(), "api", "test");
+        UUID applicationId = UUID.randomUUID();
         String fingerprint = TestData.randomFingerprint();
         String insert = """
-                insert into incident.incidents (id, application_id, title, status, severity, first_seen_at,
-                    last_seen_at, occurrence_count, fingerprint)
-                values (?, ?, 'Timeout', ?, 'ERROR', now(), now(), 1, ?)""";
+                insert into incident.incidents (id, application_id, application_name, service_name, environment,
+                    title, status, severity, first_seen_at, last_seen_at, occurrence_count, fingerprint)
+                values (?, ?, 'schema-test', 'api', 'test', 'Timeout', ?, 'ERROR', now(), now(), 1, ?)""";
 
         jdbcTemplate.update(insert, UUID.randomUUID(), applicationId, "RESOLVED", fingerprint);
         jdbcTemplate.update(insert, UUID.randomUUID(), applicationId, "OPEN", fingerprint);
@@ -79,15 +89,5 @@ class IncidentServiceApplicationTests {
                 fingerprint))
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("uq_incidents_active_fingerprint");
-    }
-
-    @Test
-    void databaseRejectsIncidentsForUnknownApplications() {
-        assertThatThrownBy(() -> jdbcTemplate.update("""
-                insert into incident.incidents (id, application_id, title, status, severity, first_seen_at,
-                    last_seen_at, occurrence_count, fingerprint)
-                values (?, ?, 'Timeout', 'OPEN', 'ERROR', now(), now(), 1, ?)""",
-                UUID.randomUUID(), UUID.randomUUID(), TestData.randomFingerprint()))
-                .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

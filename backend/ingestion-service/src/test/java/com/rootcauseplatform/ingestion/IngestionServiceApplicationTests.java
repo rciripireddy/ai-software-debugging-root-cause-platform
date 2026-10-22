@@ -55,10 +55,10 @@ class IngestionServiceApplicationTests {
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'ingestion' order by 1",
                 String.class))
-                .containsExactly("applications", "error_events", "flyway_schema_history");
+                .containsExactly("applications", "error_events", "flyway_schema_history", "outbox_events");
         assertThat(jdbcTemplate.queryForList(
                 "select version from ingestion.flyway_schema_history where success and version is not null",
                 String.class))
-                .contains("1");
+                .contains("1", "2");
     }
 }

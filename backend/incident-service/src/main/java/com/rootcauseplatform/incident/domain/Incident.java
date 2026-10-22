@@ -1,21 +1,15 @@
 package com.rootcauseplatform.incident.domain;
 
 import java.time.Instant;
-import java.util.LinkedHashSet;
-import java.util.Set;
 import java.util.UUID;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.JoinTable;
-import jakarta.persistence.ManyToMany;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 import org.hibernate.annotations.CreationTimestamp;
@@ -31,9 +25,8 @@ public class Incident {
     @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "application_id", nullable = false, updatable = false)
-    private Application application;
+    @Embedded
+    private ApplicationInfo application;
 
     @Column(nullable = false)
     private String title;
@@ -68,18 +61,12 @@ public class Incident {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    @ManyToMany(fetch = FetchType.LAZY)
-    @JoinTable(schema = "incident", name = "incident_events",
-            joinColumns = @JoinColumn(name = "incident_id"),
-            inverseJoinColumns = @JoinColumn(name = "error_event_id"))
-    private Set<ErrorEvent> events = new LinkedHashSet<>();
-
     protected Incident() {
     }
 
-    /** Opens a new incident for error events that share an application and fingerprint. */
-    public static Incident open(Application application, String fingerprint, String title, Severity severity,
-            String summary, Set<ErrorEvent> events) {
+    /** Opens a new incident for one or more occurrences of the same error. */
+    public static Incident open(ApplicationInfo application, String fingerprint, String title, Severity severity,
+            String summary, Instant firstSeenAt, Instant lastSeenAt, int occurrenceCount) {
         Incident incident = new Incident();
         incident.application = application;
         incident.fingerprint = fingerprint;
@@ -87,18 +74,34 @@ public class Incident {
         incident.severity = severity;
         incident.summary = summary;
         incident.status = IncidentStatus.OPEN;
-        incident.events.addAll(events);
-        incident.occurrenceCount = events.size();
-        incident.firstSeenAt = events.stream().map(ErrorEvent::getEventTimestamp).min(Instant::compareTo).orElseThrow();
-        incident.lastSeenAt = events.stream().map(ErrorEvent::getEventTimestamp).max(Instant::compareTo).orElseThrow();
+        incident.firstSeenAt = firstSeenAt;
+        incident.lastSeenAt = lastSeenAt;
+        incident.occurrenceCount = occurrenceCount;
         return incident;
+    }
+
+    /**
+     * Adds one occurrence. Events can arrive out of order, so first/last seen are the minimum and
+     * maximum event timestamps, and the severity never decreases.
+     */
+    public void recordOccurrence(Instant eventTimestamp, Severity eventSeverity) {
+        occurrenceCount++;
+        if (eventTimestamp.isBefore(firstSeenAt)) {
+            firstSeenAt = eventTimestamp;
+        }
+        if (eventTimestamp.isAfter(lastSeenAt)) {
+            lastSeenAt = eventTimestamp;
+        }
+        if (eventSeverity.compareTo(severity) > 0) {
+            severity = eventSeverity;
+        }
     }
 
     public UUID getId() {
         return id;
     }
 
-    public Application getApplication() {
+    public ApplicationInfo getApplication() {
         return application;
     }
 

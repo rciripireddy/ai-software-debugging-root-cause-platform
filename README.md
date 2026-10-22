@@ -7,61 +7,71 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 2 — Backend services and PostgreSQL data model.**
-> Log events can be ingested, stored and fingerprinted, and incidents can be created and queried
-> through REST APIs. Kafka streaming, **automatic** incident correlation and root cause analysis
-> are **not implemented yet**, and the dashboard is not yet connected to the new APIs.
-> See [Roadmap](#roadmap).
+> **Project status: Phase 3 — Kafka event streaming and automated incident correlation.**
+> Log events are ingested and stored, published reliably to Kafka through a transactional outbox,
+> and correlated into incidents automatically by a Kafka consumer. Root cause analysis is **not
+> implemented yet**, and the dashboard is not yet connected to the APIs. See [Roadmap](#roadmap).
 
 ## What works today
 
 - **Log ingestion API** (`ingestion-service`): `POST /api/v1/logs` validates and stores log and
   error events in PostgreSQL, registers new applications automatically and assigns each event a
-  deterministic **error fingerprint** so repeated occurrences of the same error can be grouped.
-  `GET /api/v1/logs/{id}` returns a stored event.
-- **Incident API** (`incident-service`): create an incident from stored error events that share an
-  application and fingerprint, retrieve it with its recent events, and list incidents with
-  filters (status, severity, application, service, environment) and pagination.
-- **PostgreSQL data model** managed by Flyway migrations: applications, error events, incidents
-  and incident–event links, with foreign keys, check constraints and indexes.
-  See [docs/database.md](docs/database.md).
-- **Consistent error handling**: validation errors, malformed input, missing resources and
-  conflicts return RFC 9457 problem details with useful 4xx status codes, never stack traces.
-- **Structured logging**: JSON (Elastic Common Schema) logs in Docker, with a correlation ID per
-  request and identifiers such as event, incident and application IDs.
+  deterministic **error fingerprint**. `GET /api/v1/logs/{id}` returns a stored event.
+- **Reliable event publishing**: every stored event is announced as an `ErrorEventCreated`
+  message on Kafka topic `error-events.v1`. The message is written to an **outbox table in the
+  same transaction** as the event and published in the background, so a Kafka outage never loses
+  an accepted event and does not affect the API.
+- **Automatic incident correlation** (`incident-service`): a Kafka consumer groups repeated
+  occurrences of the same error (same application and fingerprint) into one incident, updating
+  its occurrence count, first/last seen and severity. Processing is **idempotent**, so
+  redelivered messages are not counted twice; failing messages are **retried a bounded number of
+  times** and then moved to a **dead-letter topic**.
+- **Incident API**: list incidents with filters (status, severity, application, service,
+  environment) and pagination, and retrieve one with its recent events. The Phase 2 manual
+  creation endpoint still works but is deprecated.
+- **PostgreSQL data model** managed by Flyway migrations, with one schema per service and no
+  foreign keys between them. See [docs/database.md](docs/database.md).
+- **Consistent error handling**: RFC 9457 problem details with meaningful status codes, never
+  stack traces.
+- **Structured logging**: JSON (Elastic Common Schema) logs in Docker. A request's correlation ID
+  is carried through Kafka, so one ID connects the API call, the publication and the incident
+  update; Kafka log lines include topic, partition and offset.
 - **Python analysis service** (FastAPI) with a `GET /health` endpoint. No analysis logic yet.
 - **React dashboard** with responsive navigation:
   - **Service Health** — *live*: polls the three backend services and shows their status.
   - **Overview**, **Error Monitoring**, **Root Cause Analysis** — *preview*: layouts that are not
-    yet connected to the new APIs. Each page is labelled **Live** or **Preview**.
+    yet connected to the APIs. Each page is labelled **Live** or **Preview**.
 - **Docker Compose** environment with all services, PostgreSQL and a single-node Kafka broker
-  (KRaft). The broker runs but is not used by the services yet.
-- **Demo data**: synthetic log events in [`sample-data/`](sample-data/) and a script to send them.
+  (KRaft), with health checks and persistent volumes.
+- **Demo data**: synthetic log events in [`sample-data/`](sample-data/) and a script that sends them
+  and shows the incidents created from them.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    apps["Monitored applications"] -->|"POST /api/v1/logs"| ingestion["ingestion-service"]
-    ingestion -->|"applications, error_events"| db[("PostgreSQL")]
-    incident["incident-service"] -->|"incidents, incident_events"| db
-    ui["React dashboard"] --> ingestion
-    ui --> incident
-    ui --> analysis["analysis-service"]
-    kafka[("Kafka<br/>(provisioned, not yet used)")]
+    apps["Application / error producer"] -->|"POST /api/v1/logs"| ingestion["Ingestion API<br/>(ingestion-service)"]
+    ingestion -->|"same transaction"| store[("PostgreSQL<br/>error_events + outbox")]
+    store -->|"outbox publisher"| kafka[("Kafka<br/>error-events.v1")]
+    kafka --> consumer["Incident consumer<br/>(incident-service)"]
+    consumer -->|"correlate, idempotently"| incidents[("PostgreSQL<br/>incidents")]
+    consumer -.->|"after retries"| dlt[("Kafka<br/>error-events.v1.dlt")]
+    ui["React dashboard"] -.->|"service health"| ingestion
+    ui -.-> consumer
+    ui -.-> analysis["analysis-service"]
 ```
 
-Each Spring Boot service owns a PostgreSQL schema and migrates it on startup. incident-service
-reads the events stored by ingestion-service. Event streaming through Kafka, automatic
-correlation and the analysis service's logic come in later phases.
-Details: [docs/architecture.md](docs/architecture.md).
+ingestion-service returns `201` as soon as the event and its outbox message are committed; it
+does not wait for Kafka or for the incident update. incident-service builds incidents only from
+Kafka messages. Details: [docs/architecture.md](docs/architecture.md) and
+[docs/events.md](docs/events.md).
 
 ## Technology
 
 | Area | Technology |
 | --- | --- |
-| Backend services | Java 21, Spring Boot 4.1 (Web MVC, Data JPA, Validation, Actuator), Hibernate 7, Flyway, Maven Wrapper |
-| Backend tests | JUnit 5, AssertJ, Testcontainers (PostgreSQL 17) |
+| Backend services | Java 21, Spring Boot 4.1 (Web MVC, Data JPA, Validation, Actuator), Spring for Apache Kafka, Hibernate 7, Flyway, Maven Wrapper |
+| Backend tests | JUnit 5, AssertJ, Awaitility, Testcontainers (PostgreSQL 17, Kafka 4.3) |
 | Analysis service | Python 3.12, FastAPI, Uvicorn, pytest, Ruff |
 | Frontend | React 19, TypeScript 6, Vite 8, React Router 8, Vitest, Testing Library, ESLint |
 | Messaging | Apache Kafka 4.3 (KRaft, single node) |
@@ -125,22 +135,31 @@ Stop the stack with `docker compose down` (add `-v` to also delete the PostgreSQ
 ### Try the APIs with demo data
 
 ```bash
-# Send 10 synthetic events (demo data) to the ingestion API
-python sample-data/send_sample_logs.py
-
-# Three payment-service timeouts share one fingerprint. Find their IDs ...
-docker compose exec postgres psql -U rootcause -d rootcause -c \
-  "SELECT id, event_timestamp, left(fingerprint, 12) FROM ingestion.error_events
-   WHERE exception_type = 'java.net.SocketTimeoutException' ORDER BY event_timestamp"
-
-# ... and create an incident from them
-curl -X POST http://localhost:8082/api/v1/incidents -H 'Content-Type: application/json' \
-  -d '{"errorEventIds": ["<id-1>", "<id-2>", "<id-3>"]}'
-
-curl 'http://localhost:8082/api/v1/incidents?application=demo-shop&status=OPEN'
+# Send 10 synthetic events (demo data) and wait for the incidents created from them
+python sample-data/send_sample_logs.py --application demo-shop-trial
 ```
 
-Endpoints, fields, example responses and error codes: [docs/api.md](docs/api.md).
+The ten events contain three occurrences of the same payment timeout, two occurrences of a
+checkout failure, two other errors and three `INFO`/`WARN` events. Example output:
+
+```text
+Incidents for 'demo-shop-trial' (created automatically via Kafka):
+    2 x  checkout-service   OPEN    com.shop.checkout.PaymentFailedException: Order could not be completed
+    3 x  payment-service    OPEN    java.net.SocketTimeoutException: Payment authorization failed
+    1 x  catalog-service    OPEN    java.lang.NullPointerException: Failed to render product page
+    1 x  inventory-service  OPEN    org.springframework.dao.DataAccessResourceFailureException: Unable to ...
+```
+
+Running it again with the same `--application` adds the new occurrences to the same open
+incidents. Query the incident API directly:
+
+```bash
+curl 'http://localhost:8082/api/v1/incidents?application=demo-shop-trial&status=OPEN'
+curl 'http://localhost:8082/api/v1/incidents/<incident-id>'
+```
+
+Endpoints, fields, example responses and error codes: [docs/api.md](docs/api.md). Inspecting
+topics, consumer lag and the outbox: [docs/events.md](docs/events.md#inspecting-topics-locally).
 
 ### Health check commands
 
@@ -161,11 +180,12 @@ Each part can also run directly on the host. Use separate terminals.
 
 **Spring Boot services**
 
-The services need PostgreSQL. Start it with Docker Compose and point the services at it with
-environment variables (the defaults are `localhost:5432`, database and user `rootcause`):
+The services need PostgreSQL and Kafka. Start both with Docker Compose and point the services at
+them with environment variables. The defaults are `localhost:5432` (database and user
+`rootcause`) and Kafka at `localhost:9092`, the broker's host listener:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres kafka
 # Use the values from .env. PowerShell: $env:DB_PORT='5432'; $env:DB_PASSWORD='...'
 export DB_PORT='<POSTGRES_PORT>' DB_PASSWORD='<POSTGRES_PASSWORD>'
 
@@ -176,8 +196,8 @@ cd backend/incident-service
 ./mvnw spring-boot:run
 ```
 
-Tests start their own throwaway PostgreSQL container with Testcontainers, so they only need a
-running Docker engine:
+Tests start their own throwaway PostgreSQL and Kafka containers with Testcontainers, so they only
+need a running Docker engine:
 
 ```bash
 cd backend/ingestion-service && ./mvnw test
@@ -217,6 +237,7 @@ No credentials are stored in source files.
 
 - [docs/architecture.md](docs/architecture.md) — components, request routing, health checks, logging
 - [docs/api.md](docs/api.md) — REST endpoints with examples and error format
+- [docs/events.md](docs/events.md) — Kafka topics, `ErrorEventCreated` contract, outbox, correlation, idempotency, retries and dead-letter topic
 - [docs/database.md](docs/database.md) — data model, constraints, indexes and migrations
 - [docs/configuration.md](docs/configuration.md) — environment variables and service settings
 
@@ -225,8 +246,8 @@ No credentials are stored in source files.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Project foundation: services, dashboard shell, Docker environment, tests | Done |
-| 2 | Backend services and data model: ingestion API, fingerprinting, incident API, PostgreSQL schema, validation, structured logging | **Current** |
-| 3 | Event streaming and correlation: publish events to Kafka, correlate them into incidents automatically, detect recurring failures | Planned |
+| 2 | Backend services and data model: ingestion API, fingerprinting, incident API, PostgreSQL schema, validation, structured logging | Done |
+| 3 | Event streaming and correlation: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic | **Current** |
 | 4 | Root cause analysis: analysis service evaluates incidents and ranks likely causes with evidence | Planned |
 | 5 | Dashboard integration: overview, error monitoring and root cause pages use real data | Planned |
 | 6 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |

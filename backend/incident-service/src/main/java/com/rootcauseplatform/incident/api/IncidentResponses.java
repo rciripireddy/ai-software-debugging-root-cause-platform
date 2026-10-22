@@ -6,9 +6,9 @@ import java.util.UUID;
 
 import org.springframework.data.domain.Page;
 
-import com.rootcauseplatform.incident.domain.Application;
-import com.rootcauseplatform.incident.domain.ErrorEvent;
+import com.rootcauseplatform.incident.domain.ApplicationInfo;
 import com.rootcauseplatform.incident.domain.Incident;
+import com.rootcauseplatform.incident.domain.IncidentEvent;
 import com.rootcauseplatform.incident.domain.IncidentStatus;
 import com.rootcauseplatform.incident.domain.Severity;
 
@@ -20,9 +20,9 @@ public final class IncidentResponses {
 
     public record ApplicationSummary(UUID id, String name, String service, String environment) {
 
-        static ApplicationSummary from(Application application) {
-            return new ApplicationSummary(application.getId(), application.getName(),
-                    application.getServiceName(), application.getEnvironment());
+        static ApplicationSummary from(ApplicationInfo application) {
+            return new ApplicationSummary(application.id(), application.name(), application.serviceName(),
+                    application.environment());
         }
     }
 
@@ -57,7 +57,7 @@ public final class IncidentResponses {
             String traceId,
             String correlationId) {
 
-        static EventSummary from(ErrorEvent event) {
+        static EventSummary from(IncidentEvent event) {
             return new EventSummary(event.getId(), event.getEventTimestamp(), event.getSeverity(),
                     event.getMessage(), event.getExceptionType(), event.getHost(), event.getTraceId(),
                     event.getCorrelationId());
@@ -84,7 +84,7 @@ public final class IncidentResponses {
             int recentEventLimit,
             List<EventSummary> recentEvents) {
 
-        static IncidentDetail from(Incident incident, List<ErrorEvent> recentEvents, int recentEventLimit) {
+        static IncidentDetail from(Incident incident, List<IncidentEvent> recentEvents, int recentEventLimit) {
             return new IncidentDetail(incident.getId(), incident.getTitle(), incident.getStatus(),
                     incident.getSeverity(), ApplicationSummary.from(incident.getApplication()),
                     incident.getOccurrenceCount(), incident.getFirstSeenAt(), incident.getLastSeenAt(),

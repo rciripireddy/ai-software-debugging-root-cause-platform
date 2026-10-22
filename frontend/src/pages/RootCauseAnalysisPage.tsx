@@ -30,8 +30,8 @@ export function RootCauseAnalysisPage() {
         <section className="card" aria-labelledby="incident-queue-heading">
           <h2 id="incident-queue-heading">Incident queue</h2>
           <EmptyState icon={ListChecks} title="Not connected to the incident data yet">
-            Incidents can be created through the incident API, but this page is not connected to it
-            yet (planned for Phase 5).
+            Incidents are created automatically from error events, but this page is not connected to
+            the incident API yet (planned for Phase 5).
           </EmptyState>
         </section>
 

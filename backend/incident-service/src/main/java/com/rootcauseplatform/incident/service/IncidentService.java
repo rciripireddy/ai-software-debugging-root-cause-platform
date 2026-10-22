@@ -1,5 +1,6 @@
 package com.rootcauseplatform.incident.service;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -18,13 +19,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.rootcauseplatform.incident.api.CreateIncidentRequest;
-import com.rootcauseplatform.incident.domain.Application;
-import com.rootcauseplatform.incident.domain.ErrorEvent;
-import com.rootcauseplatform.incident.domain.ErrorEventRepository;
+import com.rootcauseplatform.incident.domain.ApplicationInfo;
 import com.rootcauseplatform.incident.domain.Incident;
+import com.rootcauseplatform.incident.domain.IncidentEvent;
+import com.rootcauseplatform.incident.domain.IncidentEventRepository;
 import com.rootcauseplatform.incident.domain.IncidentRepository;
 import com.rootcauseplatform.incident.domain.Severity;
+import com.rootcauseplatform.incident.service.IngestionEventReader.StoredEvent;
 
+/** Incident queries for the REST API, and the deprecated manual incident creation. */
 @Service
 public class IncidentService {
 
@@ -32,15 +35,17 @@ public class IncidentService {
     public static final int RECENT_EVENT_LIMIT = 50;
 
     private static final Logger log = LoggerFactory.getLogger(IncidentService.class);
-    private static final int MAX_TITLE_LENGTH = 255;
     private static final Sort NEWEST_ACTIVITY_FIRST = Sort.by(Sort.Order.desc("lastSeenAt"), Sort.Order.desc("id"));
 
     private final IncidentRepository incidents;
-    private final ErrorEventRepository events;
+    private final IncidentEventRepository incidentEvents;
+    private final IngestionEventReader ingestionEvents;
 
-    public IncidentService(IncidentRepository incidents, ErrorEventRepository events) {
+    public IncidentService(IncidentRepository incidents, IncidentEventRepository incidentEvents,
+            IngestionEventReader ingestionEvents) {
         this.incidents = incidents;
-        this.events = events;
+        this.incidentEvents = incidentEvents;
+        this.ingestionEvents = ingestionEvents;
     }
 
     @Transactional(readOnly = true)
@@ -50,73 +55,81 @@ public class IncidentService {
 
     @Transactional(readOnly = true)
     public IncidentWithEvents get(UUID id) {
-        Incident incident = incidents.findWithApplicationById(id)
+        Incident incident = incidents.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Incident " + id + " was not found"));
-        return new IncidentWithEvents(incident, events.findLatestByIncidentId(id, Limit.of(RECENT_EVENT_LIMIT)));
+        return new IncidentWithEvents(incident, latestEvents(id));
     }
 
+    /**
+     * Creates an incident from stored error events (Phase 2 behavior). Deprecated: incidents are
+     * now created automatically from Kafka messages, so events of {@code ERROR} severity or above
+     * usually already belong to an incident and this returns 409.
+     */
     @Transactional
-    public IncidentWithEvents create(CreateIncidentRequest request) {
+    public IncidentWithEvents createFromStoredEvents(CreateIncidentRequest request) {
         Set<UUID> eventIds = new LinkedHashSet<>(request.errorEventIds());
-        Set<ErrorEvent> errorEvents = new LinkedHashSet<>(events.findAllByIdIn(eventIds));
-        verifyAllEventsExist(eventIds, errorEvents);
+        List<StoredEvent> events = ingestionEvents.findByIds(eventIds);
+        verifyAllEventsExist(eventIds, events);
 
-        requireSingle(errorEvents.stream().map(event -> event.getApplication().getId()).collect(Collectors.toSet()),
+        requireSingle(events.stream().map(event -> event.application().id()).collect(Collectors.toSet()),
                 "All error events must belong to the same application.");
-        String fingerprint = requireSingle(
-                errorEvents.stream().map(ErrorEvent::getFingerprint).collect(Collectors.toSet()),
+        String fingerprint = requireSingle(events.stream().map(StoredEvent::fingerprint).collect(Collectors.toSet()),
                 "All error events must have the same fingerprint.");
-        Application application = errorEvents.iterator().next().getApplication();
+        ApplicationInfo application = events.getFirst().application();
 
-        verifyEventsAreUnassigned(eventIds);
-        incidents.findActiveIncidentId(application.getId(), fingerprint).ifPresent(existingId -> {
-            throw new ConflictException("An unresolved incident already exists for this error: " + existingId + ".");
+        List<UUID> assigned = incidentEvents.findAllById(eventIds).stream().map(IncidentEvent::getId).toList();
+        if (!assigned.isEmpty()) {
+            throw new ConflictException("Error events already belong to an incident: " + assigned + ".");
+        }
+        incidents.findActiveForUpdate(application.id(), fingerprint).ifPresent(existing -> {
+            throw new ConflictException("An unresolved incident already exists for this error: "
+                    + existing.getId() + ".");
         });
 
+        StoredEvent latest = events.stream().max(Comparator.comparing(StoredEvent::eventTimestamp)).orElseThrow();
         Incident incident = Incident.open(application, fingerprint,
-                titleFor(request.title(), errorEvents),
-                request.severity() != null ? request.severity() : highestSeverity(errorEvents),
+                request.title() != null && !request.title().isBlank()
+                        ? request.title().strip()
+                        : IncidentTitles.of(latest.exceptionType(), latest.message()),
+                request.severity() != null ? request.severity() : highestSeverity(events),
                 blankToNull(request.summary()),
-                errorEvents);
+                events.stream().map(StoredEvent::eventTimestamp).min(Instant::compareTo).orElseThrow(),
+                latest.eventTimestamp(),
+                events.size());
         try {
             incidents.saveAndFlush(incident);
+            incidentEvents.saveAllAndFlush(events.stream()
+                    .map(event -> new IncidentEvent(event.id(), incident.getId(), event.eventTimestamp(),
+                            event.severity(), event.message(), event.exceptionType(), event.host(),
+                            event.traceId(), event.correlationId()))
+                    .toList());
         } catch (DataIntegrityViolationException e) {
-            // A concurrent request created an incident for the same error or events first.
+            // The consumer or another request assigned these events or opened the incident first.
             throw new ConflictException("The incident conflicts with one that was created concurrently.");
         }
 
-        log.atInfo()
-                .setMessage("Incident created")
-                .addKeyValue("action", "incident.create")
+        log.atWarn()
+                .setMessage("Incident created through deprecated endpoint")
+                .addKeyValue("action", "incident.create_manual")
                 .addKeyValue("incidentId", incident.getId())
-                .addKeyValue("applicationId", application.getId())
-                .addKeyValue("applicationName", application.getName())
-                .addKeyValue("serviceName", application.getServiceName())
-                .addKeyValue("environment", application.getEnvironment())
-                .addKeyValue("severity", incident.getSeverity())
+                .addKeyValue("applicationId", application.id())
+                .addKeyValue("serviceName", application.serviceName())
                 .addKeyValue("fingerprint", fingerprint)
                 .addKeyValue("eventCount", incident.getOccurrenceCount())
                 .log();
-
-        List<ErrorEvent> latest = errorEvents.stream()
-                .sorted(Comparator.comparing(ErrorEvent::getEventTimestamp).reversed())
-                .limit(RECENT_EVENT_LIMIT)
-                .toList();
-        return new IncidentWithEvents(incident, latest);
+        return new IncidentWithEvents(incident, latestEvents(incident.getId()));
     }
 
-    private static void verifyAllEventsExist(Set<UUID> requested, Set<ErrorEvent> found) {
+    private List<IncidentEvent> latestEvents(UUID incidentId) {
+        return incidentEvents.findByIncidentIdOrderByEventTimestampDescErrorEventIdDesc(incidentId,
+                Limit.of(RECENT_EVENT_LIMIT));
+    }
+
+    private static void verifyAllEventsExist(Set<UUID> requested, List<StoredEvent> found) {
         if (found.size() != requested.size()) {
-            Set<UUID> foundIds = found.stream().map(ErrorEvent::getId).collect(Collectors.toSet());
+            Set<UUID> foundIds = found.stream().map(StoredEvent::id).collect(Collectors.toSet());
             List<UUID> missing = requested.stream().filter(id -> !foundIds.contains(id)).toList();
             throw new InvalidIncidentException("Unknown error event IDs: " + missing + ".");
-        }
-    }
-
-    private void verifyEventsAreUnassigned(Set<UUID> eventIds) {
-        List<UUID> assigned = incidents.findAssignedEventIds(eventIds);
-        if (!assigned.isEmpty()) {
-            throw new ConflictException("Error events already belong to an incident: " + assigned + ".");
         }
     }
 
@@ -127,27 +140,14 @@ public class IncidentService {
         return values.iterator().next();
     }
 
-    private static Severity highestSeverity(Set<ErrorEvent> errorEvents) {
-        return errorEvents.stream().map(ErrorEvent::getSeverity).max(Comparator.naturalOrder()).orElseThrow();
-    }
-
-    /** Uses the provided title, or "ExceptionType: message" of the most recent event. */
-    private static String titleFor(String requestedTitle, Set<ErrorEvent> errorEvents) {
-        if (requestedTitle != null && !requestedTitle.isBlank()) {
-            return requestedTitle.strip();
-        }
-        ErrorEvent latest = errorEvents.stream().max(Comparator.comparing(ErrorEvent::getEventTimestamp)).orElseThrow();
-        String title = latest.getExceptionType() == null
-                ? latest.getMessage()
-                : latest.getExceptionType() + ": " + latest.getMessage();
-        title = title.strip().replaceAll("\\s+", " ");
-        return title.length() <= MAX_TITLE_LENGTH ? title : title.substring(0, MAX_TITLE_LENGTH - 1) + "…";
+    private static Severity highestSeverity(List<StoredEvent> events) {
+        return events.stream().map(StoredEvent::severity).max(Comparator.naturalOrder()).orElseThrow();
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
     }
 
-    public record IncidentWithEvents(Incident incident, List<ErrorEvent> latestEvents) {
+    public record IncidentWithEvents(Incident incident, List<IncidentEvent> latestEvents) {
     }
 }

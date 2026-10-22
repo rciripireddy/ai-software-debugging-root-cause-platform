@@ -1,21 +1,23 @@
 package com.rootcauseplatform.incident;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
-import java.util.List;
-import java.util.Map;
+import java.time.Duration;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaOperations;
+import org.testcontainers.kafka.KafkaContainer;
+
+import com.rootcauseplatform.incident.messaging.KafkaTopicProperties;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -24,43 +26,54 @@ import tools.jackson.databind.json.JsonMapper;
  * Runs with the JSON (ECS) log format used in Docker. Guards against key-value names that
  * clash with ECS fields such as {@code service}, which make Logback drop the log event.
  */
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
-        properties = "logging.structured.format.console=ecs")
+@SpringBootTest(properties = "logging.structured.format.console=ecs")
 @Import(TestcontainersConfiguration.class)
 @ExtendWith(OutputCaptureExtension.class)
 class StructuredLoggingTests {
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
-    @Value("${local.server.port}")
-    private int port;
+    @Autowired
+    private KafkaOperations<String, String> kafkaOperations;
 
     @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private KafkaContainer kafkaContainer;
+
+    @Autowired
+    private KafkaTopicProperties topics;
 
     @Test
-    void writesIncidentLogsAsValidEcsJson(CapturedOutput output) {
-        TestData data = new TestData(jdbcTemplate);
-        UUID applicationId = data.application("logging-test-" + UUID.randomUUID(), "payment-service", "test");
-        UUID event = data.errorEvent(applicationId, TestData.randomFingerprint(), "2026-10-12T09:14:05Z", "ERROR");
+    void writesConsumerLogsAsValidEcsJsonWithKafkaContext(CapturedOutput output) {
+        UUID eventId = UUID.randomUUID();
+        UUID applicationId = UUID.randomUUID();
+        String fingerprint = TestData.randomFingerprint();
+        String message = jsonMapper.writeValueAsString(TestMessages.errorEventCreated(eventId, applicationId,
+                "logging-test", fingerprint, "2026-10-12T09:14:05Z", "ERROR"));
 
-        ApiClient.Response response = new ApiClient(port).postJson("/api/v1/incidents",
-                Map.of("errorEventIds", List.of(event)));
-        assertThat(response.status()).isEqualTo(201);
-        String incidentId = response.json().get("id").asString();
+        new KafkaTestSupport(kafkaOperations, kafkaContainer).send(topics.errorEvents(),
+                TestMessages.key(applicationId, fingerprint), message, "logging-test-correlation");
 
-        List<String> lines = output.getOut().lines().filter(line -> line.startsWith("{")).toList();
+        JsonNode processed = await().atMost(Duration.ofSeconds(30))
+                .until(() -> findRecord(output, eventId), Optional::isPresent)
+                .orElseThrow();
         assertThat(output.getOut()).doesNotContain("failed to append");
+        assertThat(processed.get("action").asString()).isEqualTo("event.correlate");
+        assertThat(processed.get("outcome").asString()).isEqualTo("INCIDENT_CREATED");
+        assertThat(processed.get("incidentId").asString()).isNotBlank();
+        assertThat(processed.get("serviceName").asString()).isEqualTo("payment-service");
+        assertThat(processed.get("topic").asString()).isEqualTo("error-events.v1");
+        assertThat(processed.has("partition")).isTrue();
+        assertThat(processed.has("offset")).isTrue();
+        assertThat(processed.get("correlationId").asString()).isEqualTo("logging-test-correlation");
+        assertThat(processed.at("/service/name").asString()).isEqualTo("incident-service");
+        assertThat(processed.toString()).doesNotContain("Payment authorization failed");
+    }
 
-        JsonNode created = lines.stream()
+    private Optional<JsonNode> findRecord(CapturedOutput output, UUID eventId) {
+        return output.getOut().lines()
+                .filter(line -> line.startsWith("{") && line.contains(eventId.toString()))
                 .map(jsonMapper::readTree)
-                .filter(record -> "Incident created".equals(record.path("message").asString()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("No 'Incident created' record in:\n" + output.getOut()));
-        assertThat(created.get("action").asString()).isEqualTo("incident.create");
-        assertThat(created.get("incidentId").asString()).isEqualTo(incidentId);
-        assertThat(created.get("serviceName").asString()).isEqualTo("payment-service");
-        assertThat(created.get("eventCount").asInt()).isEqualTo(1);
-        assertThat(created.at("/service/name").asString()).isEqualTo("incident-service");
+                .filter(record -> "Error event processed".equals(record.path("message").asString()))
+                .findFirst();
     }
 }

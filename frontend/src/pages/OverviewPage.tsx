@@ -12,8 +12,8 @@ const METRICS = [
 
 const PIPELINE_STAGES = [
   { name: 'Log ingestion API', component: 'ingestion-service', state: 'REST API implemented' },
-  { name: 'Event streaming', component: 'Kafka (KRaft)', state: 'Broker provisioned' },
-  { name: 'Incident correlation', component: 'incident-service', state: 'Planned · Phase 3' },
+  { name: 'Event streaming', component: 'Kafka (KRaft)', state: 'Outbox → Kafka implemented' },
+  { name: 'Incident correlation', component: 'incident-service', state: 'Automatic · Kafka consumer' },
   { name: 'Root cause analysis', component: 'analysis-service', state: 'Planned · Phase 4' },
 ]
 

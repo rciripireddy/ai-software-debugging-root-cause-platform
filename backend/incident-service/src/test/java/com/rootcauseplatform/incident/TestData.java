@@ -9,8 +9,8 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Inserts applications and error events directly, as ingestion-service would, so incident
- * tests do not depend on another running service.
+ * Inserts applications and error events into the ingestion schema, as ingestion-service would.
+ * Needed only by tests of the deprecated manual incident endpoint, which reads those tables.
  */
 public class TestData {
 

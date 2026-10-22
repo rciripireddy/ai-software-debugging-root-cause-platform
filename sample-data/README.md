@@ -12,21 +12,25 @@ One event per line (JSON Lines), in the request format of the ingestion API
 The set intentionally contains:
 
 - a **recurring failure**: three `SocketTimeoutException`s in `payment-service` from the same code
-  path, which receive the same fingerprint;
+  path, which receive the same fingerprint and become **one incident with three occurrences**;
 - **cross-service propagation**: each payment timeout is followed by a `PaymentFailedException` in
-  `checkout-service` with the same `traceId`;
+  `checkout-service` with the same `traceId` (two of them, forming a second incident);
 - an unrelated **database connection pool exhaustion** in `inventory-service`;
 - a one-off `NullPointerException` in `catalog-service`;
-- a few `INFO` and `WARN` events.
+- three `INFO` and `WARN` events, which are stored but do not create incidents.
 
 ## Sending the demo events
 
 With the stack running (`docker compose up -d`):
 
 ```bash
-python sample-data/send_sample_logs.py                        # default: http://localhost:8081
-python sample-data/send_sample_logs.py --url http://localhost:3000/api/ingestion
+python sample-data/send_sample_logs.py                              # application "demo-shop"
+python sample-data/send_sample_logs.py --application demo-shop-trial
+python sample-data/send_sample_logs.py --url http://localhost:3000/api/ingestion --no-wait
 ```
 
-The script uses only the Python standard library and prints each event's ID and fingerprint.
-Every run stores the events again as new rows.
+The script sends each event to the ingestion API and prints its ID and fingerprint. It then waits
+until incident-service has correlated the `ERROR` events through Kafka (up to 30 seconds) and
+prints the resulting incidents. `--application` sends the events under another application name,
+which gives a fresh set of incidents; running it again with the same name adds occurrences to the
+existing open incidents. It uses only the Python standard library.

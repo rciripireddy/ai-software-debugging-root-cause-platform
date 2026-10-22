@@ -1,0 +1,21 @@
+{
+  "eventType": "ErrorEventCreated",
+  "eventVersion": 1,
+  "errorEventId": "01a159ed-2f0a-73d1-94f9-a9b84bbb1a00",
+  "occurredAt": "2026-10-20T15:27:58.731355Z",
+  "application": {
+    "id": "fb6ee99c-6841-4acb-b651-683d87993cae",
+    "name": "demo-shop",
+    "service": "payment-service",
+    "environment": "staging"
+  },
+  "eventTimestamp": "2026-10-12T09:14:05.402Z",
+  "severity": "ERROR",
+  "exceptionType": "java.net.SocketTimeoutException",
+  "message": "Payment authorization failed",
+  "fingerprint": "1768a03e1bfbe239bfe6ea3ee3ae7495a804729552f3187a69f7515444348ae7",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "correlationId": null,
+  "source": "com.shop.payment.GatewayClient",
+  "host": "payment-5d8b7-fghij"
+}

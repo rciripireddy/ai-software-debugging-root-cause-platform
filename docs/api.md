@@ -100,6 +100,12 @@ curl -i http://localhost:8081/api/v1/logs \
 }
 ```
 
+`201` means the event and its Kafka message are stored durably in PostgreSQL. The message is
+published to Kafka in the background (usually within a second), and incident-service correlates
+it asynchronously, so the event appears in an incident shortly after the response, not before
+it. If Kafka is unavailable, ingestion keeps accepting events; they are published once Kafka is
+back. See [events.md](events.md).
+
 #### Fingerprints
 
 The fingerprint identifies "the same error" across occurrences. It is a SHA-256 hash of:
@@ -145,43 +151,10 @@ Returns a stored event, including its application and `metadata`.
 
 ## Incident service (port 8082)
 
-Incidents group error events that share an application and a fingerprint. In this phase
-incidents are created explicitly through the API; automatic correlation of incoming events is
-planned for a later phase.
-
-### `POST /api/v1/incidents`
-
-| Field | Required | Rules |
-| --- | --- | --- |
-| `errorEventIds` | yes | 1–100 IDs of stored error events |
-| `title` | no | Up to 255 characters. Default: `"<exceptionType>: <message>"` of the most recent event |
-| `summary` | no | Up to 10,000 characters |
-| `severity` | no | Default: the highest severity among the events |
-
-The new incident has status `OPEN`; `occurrenceCount`, `firstSeenAt` and `lastSeenAt` are
-derived from the events.
-
-```bash
-curl -i http://localhost:8082/api/v1/incidents \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "errorEventIds": [
-      "01a159ed-2f0a-73d1-94f9-a9b84bbb1a00",
-      "01a159ed-2f62-7a23-a544-8a9d26f829cb",
-      "01a159ed-2f90-7564-a504-eb5b06e7f2fb"
-    ],
-    "summary": "Demo incident: recurring payment gateway timeouts (sample data)."
-  }'
-```
-
-`201 Created`, with `Location: /api/v1/incidents/{id}` and the incident details (see `GET` below).
-
-| Error | Status |
-| --- | --- |
-| An ID does not refer to a stored event | `422` |
-| Events belong to different applications or have different fingerprints | `422` |
-| An event already belongs to an incident | `409` |
-| An unresolved (`OPEN` or `INVESTIGATING`) incident already exists for this application and fingerprint | `409` |
+Incidents are created **automatically**: incident-service consumes the `ErrorEventCreated`
+messages published by ingestion-service and groups events with the same application and
+fingerprint into one unresolved incident. Events below `ERROR` severity do not create incidents.
+The rules are described in [events.md](events.md#correlation-rules).
 
 ### `GET /api/v1/incidents/{id}`
 
@@ -267,4 +240,48 @@ curl 'http://localhost:8082/api/v1/incidents?application=demo-shop&status=OPEN&s
 }
 ```
 
-There is no endpoint to change an incident's status yet.
+There is no endpoint to change an incident's status yet; `RESOLVED` can currently only be set
+directly in the database.
+
+### `POST /api/v1/incidents` (deprecated)
+
+> **Deprecated since Phase 3.** Incidents are now created automatically from Kafka messages.
+> The endpoint still works for existing clients and responds with an RFC 9745
+> `Deprecation: @1792454400` header (2026-10-20). It will be removed in a later phase.
+>
+> It creates an incident from events stored by ingestion-service. Because the consumer already
+> correlates every event of `ERROR` severity or above, those events normally belong to an
+> incident already and the request returns `409`; in practice the endpoint is only useful for
+> `WARN` and lower events, which are not correlated automatically. Events assigned through this
+> endpoint are skipped by the consumer when their Kafka message arrives (`ALREADY_ASSIGNED`).
+> It is the only code in incident-service that still reads ingestion-service's tables.
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `errorEventIds` | yes | 1–100 IDs of stored error events |
+| `title` | no | Up to 255 characters. Default: `"<exceptionType>: <message>"` of the most recent event |
+| `summary` | no | Up to 10,000 characters |
+| `severity` | no | Default: the highest severity among the events |
+
+The new incident has status `OPEN`; `occurrenceCount`, `firstSeenAt` and `lastSeenAt` are
+derived from the events.
+
+```bash
+curl -i http://localhost:8082/api/v1/incidents \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "errorEventIds": [
+      "01a159ed-2ef9-7e05-9c04-298351ea066b"
+    ],
+    "summary": "Slow payment gateway responses (demo data)."
+  }'
+```
+
+`201 Created`, with `Location: /api/v1/incidents/{id}` and the incident details (see `GET` below).
+
+| Error | Status |
+| --- | --- |
+| An ID does not refer to a stored event | `422` |
+| Events belong to different applications or have different fingerprints | `422` |
+| An event already belongs to an incident | `409` |
+| An unresolved (`OPEN` or `INVESTIGATING`) incident already exists for this application and fingerprint | `409` |

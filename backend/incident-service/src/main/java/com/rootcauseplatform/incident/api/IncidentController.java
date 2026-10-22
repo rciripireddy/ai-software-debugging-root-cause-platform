@@ -31,6 +31,10 @@ import jakarta.validation.constraints.Size;
 @RequestMapping(path = "/api/v1/incidents", produces = MediaType.APPLICATION_JSON_VALUE)
 public class IncidentController {
 
+    static final String DEPRECATION_HEADER = "Deprecation";
+    /** 2026-10-20T00:00:00Z as an RFC 9745 structured-field date. */
+    static final String DEPRECATED_SINCE = "@1792454400";
+
     private final IncidentService incidentService;
 
     public IncidentController(IncidentService incidentService) {
@@ -55,10 +59,17 @@ public class IncidentController {
         return toDetail(incidentService.get(id));
     }
 
+    /**
+     * Deprecated since Phase 3: incidents are created automatically from Kafka messages. Kept so
+     * existing clients keep working; the response carries an RFC 9745 {@code Deprecation} header.
+     */
+    @Deprecated
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<IncidentDetail> create(@Valid @RequestBody CreateIncidentRequest request) {
-        IncidentDetail incident = toDetail(incidentService.create(request));
-        return ResponseEntity.created(URI.create("/api/v1/incidents/" + incident.id())).body(incident);
+        IncidentDetail incident = toDetail(incidentService.createFromStoredEvents(request));
+        return ResponseEntity.created(URI.create("/api/v1/incidents/" + incident.id()))
+                .header(DEPRECATION_HEADER, DEPRECATED_SINCE)
+                .body(incident);
     }
 
     private static IncidentDetail toDetail(IncidentWithEvents result) {

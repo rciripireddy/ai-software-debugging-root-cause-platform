@@ -42,6 +42,12 @@ Both Spring Boot services read these environment variables. Docker Compose sets 
 | `DB_PASSWORD` | *(empty)* | Database password. No default is stored in source files |
 | `SERVER_PORT` | `8081` / `8082` | HTTP port of ingestion-service / incident-service |
 | `LOGGING_STRUCTURED_FORMAT_CONSOLE` | *(unset)* | `ecs` for JSON logs. Docker Compose sets it; unset gives plain-text logs |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka brokers (`kafka:29092` inside Docker Compose) |
+| `KAFKA_TOPIC_ERROR_EVENTS` | `error-events.v1` | Topic for `ErrorEventCreated` messages |
+| `KAFKA_TOPIC_PARTITIONS` | `3` | Partitions used when the services create the topics |
+| `KAFKA_TOPIC_ERROR_EVENTS_DLT` | `error-events.v1.dlt` | incident-service only: dead-letter topic |
+| `KAFKA_CONSUMER_CONCURRENCY` | `3` | incident-service only: consumer threads (at most one per partition is useful) |
+| `CORRELATION_MINIMUM_SEVERITY` | `ERROR` | incident-service only: events below this severity create no incidents |
 
 Other settings in each `application.yml`:
 
@@ -50,7 +56,34 @@ Other settings in each `application.yml`:
   changes the schema itself.
 - The connection pool waits at most 5 seconds for a database connection, so an unreachable
   database is reported quickly: API calls return `503` and readiness reports `DOWN`.
-- Actuator exposes only `health` and `info`. The readiness group includes the database check.
+- Actuator exposes only `health` and `info`. The readiness group includes the database check,
+  but not Kafka (see [architecture.md](architecture.md#health-checks)).
+
+### Outbox publisher (ingestion-service, `app.outbox.*`)
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `publisher-enabled` | `true` | Run the background publisher |
+| `poll-interval` | `1s` | Pause between publishing rounds |
+| `batch-size` | `50` | Messages per round |
+| `send-timeout` | `10s` | Wait for Kafka's acknowledgement of one message |
+| `initial-backoff` / `max-backoff` | `1s` / `60s` | Retry delay after a failed send, doubling per attempt |
+| `alert-every-attempts` | `10` | Log at `ERROR` every this many failed attempts of one message |
+| `retention` | `7d` | Delete published outbox rows after this time |
+
+The Kafka producer uses `acks=all` with idempotence enabled, and short client timeouts
+(`max.block.ms` 5 s, `delivery.timeout.ms` 10 s) so a Kafka outage is detected quickly; the
+outbox, not the producer, retries over longer periods.
+
+### Kafka consumer (incident-service)
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `spring.kafka.consumer.group-id` | `incident-service` | Consumer group |
+| `spring.kafka.consumer.auto-offset-reset` | `earliest` | A new group starts with the oldest retained message |
+| `spring.kafka.listener.ack-mode` | `record` | Offsets are committed after each processed message |
+| `app.kafka.consumer.retry.max-retries` | `3` | Retries after a failed attempt before dead-lettering |
+| `app.kafka.consumer.retry.initial-interval` / `multiplier` / `max-interval` | `1s` / `2.0` / `10s` | Retry backoff |
 
 ## Service configuration
 

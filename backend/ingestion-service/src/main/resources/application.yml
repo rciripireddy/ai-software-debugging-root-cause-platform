@@ -18,6 +18,36 @@ spring:
           time_zone: UTC
   flyway:
     schemas: ingestion
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: ${spring.application.name}
+    admin:
+      # Topic creation at startup gives up quickly when Kafka is not reachable.
+      operation-timeout: 10s
+    producer:
+      # Wait for all in-sync replicas; the idempotent producer avoids duplicates on producer retries.
+      acks: all
+      properties:
+        enable.idempotence: true
+        # Fail fast while Kafka is unavailable; the outbox retries the message later.
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+
+app:
+  kafka:
+    topics:
+      error-events: ${KAFKA_TOPIC_ERROR_EVENTS:error-events.v1}
+      partitions: ${KAFKA_TOPIC_PARTITIONS:3}
+  outbox:
+    publisher-enabled: true
+    poll-interval: 1s
+    batch-size: 50
+    send-timeout: 10s
+    initial-backoff: 1s
+    max-backoff: 60s
+    alert-every-attempts: 10
+    retention: 7d
 
 server:
   port: ${SERVER_PORT:8081}

@@ -18,6 +18,40 @@ spring:
           time_zone: UTC
   flyway:
     schemas: incident
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: ${spring.application.name}
+    admin:
+      operation-timeout: 10s
+    consumer:
+      group-id: incident-service
+      # A new consumer group starts with the oldest retained message, so nothing published
+      # before incident-service first started is skipped.
+      auto-offset-reset: earliest
+    listener:
+      # Commit the offset after each successfully processed record.
+      ack-mode: record
+      # One consumer thread per partition of error-events.v1.
+      concurrency: ${KAFKA_CONSUMER_CONCURRENCY:3}
+    producer:
+      # Used to publish failed messages to the dead-letter topic.
+      acks: all
+
+app:
+  kafka:
+    topics:
+      error-events: ${KAFKA_TOPIC_ERROR_EVENTS:error-events.v1}
+      error-events-dlt: ${KAFKA_TOPIC_ERROR_EVENTS_DLT:error-events.v1.dlt}
+      partitions: ${KAFKA_TOPIC_PARTITIONS:3}
+    consumer:
+      retry:
+        max-retries: 3
+        initial-interval: 1s
+        multiplier: 2.0
+        max-interval: 10s
+  correlation:
+    # Events below this severity are recorded as processed but do not create incidents.
+    minimum-severity: ${CORRELATION_MINIMUM_SEVERITY:ERROR}
 
 server:
   port: ${SERVER_PORT:8082}

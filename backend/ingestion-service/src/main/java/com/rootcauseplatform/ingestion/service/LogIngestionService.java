@@ -13,6 +13,7 @@ import com.rootcauseplatform.ingestion.domain.Application;
 import com.rootcauseplatform.ingestion.domain.ApplicationRepository;
 import com.rootcauseplatform.ingestion.domain.ErrorEvent;
 import com.rootcauseplatform.ingestion.domain.ErrorEventRepository;
+import com.rootcauseplatform.ingestion.outbox.ErrorEventOutbox;
 
 import tools.jackson.databind.json.JsonMapper;
 
@@ -24,16 +25,23 @@ public class LogIngestionService {
     private final ApplicationRepository applications;
     private final ErrorEventRepository events;
     private final ErrorFingerprinter fingerprinter;
+    private final ErrorEventOutbox outbox;
     private final JsonMapper jsonMapper;
 
     public LogIngestionService(ApplicationRepository applications, ErrorEventRepository events,
-            ErrorFingerprinter fingerprinter, JsonMapper jsonMapper) {
+            ErrorFingerprinter fingerprinter, ErrorEventOutbox outbox, JsonMapper jsonMapper) {
         this.applications = applications;
         this.events = events;
         this.fingerprinter = fingerprinter;
+        this.outbox = outbox;
         this.jsonMapper = jsonMapper;
     }
 
+    /**
+     * Stores the event and its {@code ErrorEventCreated} outbox message in one transaction.
+     * Publishing to Kafka happens later, in the background, so this does not depend on Kafka
+     * being available.
+     */
     @Transactional
     public ErrorEvent ingest(LogEventRequest request) {
         Application application = resolveApplication(
@@ -44,7 +52,8 @@ public class LogIngestionService {
         String fingerprint = fingerprinter.fingerprint(application.getServiceName(), request.exceptionType(),
                 request.message(), request.stackTrace());
 
-        ErrorEvent event = events.save(new ErrorEvent(
+        // Flushed so the creation timestamp is set before the outbox message is built.
+        ErrorEvent event = events.saveAndFlush(new ErrorEvent(
                 application,
                 request.timestamp(),
                 request.severity(),
@@ -57,6 +66,7 @@ public class LogIngestionService {
                 blankToNull(request.correlationId()),
                 fingerprint,
                 jsonMapper.writeValueAsString(request)));
+        outbox.enqueue(event);
 
         // Identifiers only: messages and stack traces can contain user data and are not logged.
         log.atInfo()
