@@ -85,13 +85,42 @@ outbox, not the producer, retries over longer periods.
 | `app.kafka.consumer.retry.max-retries` | `3` | Retries after a failed attempt before dead-lettering |
 | `app.kafka.consumer.retry.initial-interval` / `multiplier` / `max-interval` | `1s` / `2.0` / `10s` | Retry backoff |
 
+## Analysis service
+
+analysis-service reads environment variables (case-insensitive) through `pydantic-settings`.
+Docker Compose sets the database variables from `.env`, the service URLs and `LOG_FORMAT=json`.
+Durations accept seconds (`120`) or ISO-8601 (`PT2M`).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` | `localhost`, `5432`, `rootcause`, `rootcause`, *(empty)* | PostgreSQL connection, same variables as the Spring Boot services. The service writes only to the `analysis` schema |
+| `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` | `1` / `5` | Connection pool size |
+| `DB_CONNECT_TIMEOUT` | `5` s | Connection and pool wait timeout |
+| `DB_STARTUP_ATTEMPTS` | `10` | Attempts (2 s apart) to reach the database and apply migrations at startup |
+| `INCIDENT_SERVICE_URL` | `http://localhost:8082` | incident-service base URL (`http://incident-service:8082` in Compose) |
+| `INGESTION_SERVICE_URL` | `http://localhost:8081` | ingestion-service base URL (`http://ingestion-service:8081` in Compose) |
+| `HTTP_TIMEOUT` | `5` s | Timeout of each call to those services |
+| `HTTP_MAX_CONCURRENCY` | `8` | Maximum parallel calls to those services (shared by all requests) |
+| `ANALYSIS_MAX_EVENT_DETAILS` | `20` | Newest events of the incident whose stack trace and source are read (1–50) |
+| `ANALYSIS_RELATED_CANDIDATE_LIMIT` | `50` | Recently active incidents of the same application compared with it (0–100) |
+| `ANALYSIS_BURST_WINDOW` | `15` minutes | Window for bursts and overlapping activity |
+| `ANALYSIS_PRECEDING_WINDOW` | `2` minutes | How far back an error counts as "preceding" (time or trace link) |
+| `ANALYSIS_RELATED_THRESHOLD` | `40` | Minimum similarity score for a related incident (1–100) |
+| `LOG_FORMAT` | `text` | `json` for one ECS JSON object per line |
+| `LOG_LEVEL` | `INFO` | Root log level |
+| `SERVER_HOST` / `SERVER_PORT` | `0.0.0.0` / `8000` | Listen address |
+
+The `ANALYSIS_*` windows and threshold change results for the same input. `analysisVersion`
+identifies the rules in the code, not these settings, so stored analyses made with non-default
+values are not marked as such (see [analysis.md](analysis.md#persistence-and-versioning)).
+
 ## Service configuration
 
 | Service | File | Notable settings |
 | --- | --- | --- |
 | ingestion-service | `backend/ingestion-service/src/main/resources/application.yml` | See above |
 | incident-service | `backend/incident-service/src/main/resources/application.yml` | See above |
-| analysis-service | `analysis-service/Dockerfile` | Listens on port `8000` |
+| analysis-service | `analysis-service/src/analysis_service/config.py` | See above; port `8000` |
 | frontend | `frontend/vite.config.ts`, `frontend/nginx.conf` | API proxy routes for development and Docker |
 
 Spring Boot maps environment variables to properties, so any property can be overridden at

@@ -7,10 +7,11 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 3 — Kafka event streaming and automated incident correlation.**
-> Log events are ingested and stored, published reliably to Kafka through a transactional outbox,
-> and correlated into incidents automatically by a Kafka consumer. Root cause analysis is **not
-> implemented yet**, and the dashboard is not yet connected to the APIs. See [Roadmap](#roadmap).
+> **Project status: Phase 4 — root-cause analysis and failure-pattern detection.**
+> Log events are ingested, published reliably to Kafka and correlated into incidents
+> automatically. The analysis service analyzes an incident on request and suggests **potential**
+> root causes with evidence, using deterministic rules (no machine learning, no external AI
+> service). The dashboard is not yet connected to the APIs. See [Roadmap](#roadmap).
 
 ## What works today
 
@@ -36,7 +37,20 @@ React dashboard.
 - **Structured logging**: JSON (Elastic Common Schema) logs in Docker. A request's correlation ID
   is carried through Kafka, so one ID connects the API call, the publication and the incident
   update; Kafka log lines include topic, partition and offset.
-- **Python analysis service** (FastAPI) with a `GET /health` endpoint. No analysis logic yet.
+- **Incident analysis** (`analysis-service`, Python/FastAPI): `POST /api/v1/analysis/incidents/{id}`
+  examines an incident and its events and returns:
+  - **recurring patterns**: burst/recurring/persistent, repeated exceptions and code locations,
+    host concentration, and errors in other services that preceded it in the same trace;
+  - **related incidents**, ranked by a documented similarity score with the matching signals;
+  - **potential root causes** in categories such as timeout, downstream dependency, database,
+    application code, authentication, serialization, configuration or resource exhaustion, each
+    with its evidence, a `LOW`/`MEDIUM`/`HIGH` confidence and its calculation, and limitations.
+
+  It normalizes messages (IDs, timestamps, addresses), parses Java and Python stack traces, and
+  reads incidents and events only through the other services' REST APIs. Results are stored as
+  revisions. On 16 labelled synthetic scenarios the rules give the expected category for all 16;
+  these scenarios were written together with the rules, so this is a regression check, not a
+  measure of real-world accuracy. See [docs/analysis.md](docs/analysis.md).
 - **React dashboard** with responsive navigation:
   - **Service Health** — *live*: polls the three backend services and shows their status.
   - **Overview**, **Error Monitoring**, **Root Cause Analysis** — *preview*: layouts that are not
@@ -56,15 +70,19 @@ flowchart LR
     kafka --> consumer["Incident consumer<br/>(incident-service)"]
     consumer -->|"correlate, idempotently"| incidents[("PostgreSQL<br/>incidents")]
     consumer -.->|"after retries"| dlt[("Kafka<br/>error-events.v1.dlt")]
+    analysis["Analysis API<br/>(analysis-service)"] -->|"read incidents (REST)"| consumer
+    analysis -->|"read stack traces (REST)"| ingestion
+    analysis -->|"store revisions"| analyses[("PostgreSQL<br/>incident_analyses")]
     ui["React dashboard"] -.->|"service health"| ingestion
     ui -.-> consumer
-    ui -.-> analysis["analysis-service"]
+    ui -.-> analysis
 ```
 
 ingestion-service returns `201` as soon as the event and its outbox message are committed; it
 does not wait for Kafka or for the incident update. incident-service builds incidents only from
-Kafka messages. Details: [docs/architecture.md](docs/architecture.md) and
-[docs/events.md](docs/events.md).
+Kafka messages. analysis-service runs on request and is not part of that pipeline. Details:
+[docs/architecture.md](docs/architecture.md), [docs/events.md](docs/events.md) and
+[docs/analysis.md](docs/analysis.md).
 
 ## Technology
 
@@ -72,7 +90,8 @@ Kafka messages. Details: [docs/architecture.md](docs/architecture.md) and
 | --- | --- |
 | Backend services | Java 21, Spring Boot 4.1 (Web MVC, Data JPA, Validation, Actuator), Spring for Apache Kafka, Hibernate 7, Flyway, Maven Wrapper |
 | Backend tests | JUnit 5, AssertJ, Awaitility, Testcontainers (PostgreSQL 17, Kafka 4.3) |
-| Analysis service | Python 3.12, FastAPI, Uvicorn, pytest, Ruff |
+| Analysis service | Python 3.12, FastAPI, Uvicorn, Pydantic, HTTPX, psycopg 3; Python standard library for the analysis itself (`re`, `collections`, `statistics`) |
+| Analysis tests | pytest, Testcontainers (PostgreSQL 17), Ruff |
 | Frontend | React 19, TypeScript 6, Vite 8, React Router 8, Vitest, Testing Library, ESLint |
 | Messaging | Apache Kafka 4.3 (KRaft, single node) |
 | Database | PostgreSQL 17 |
@@ -85,10 +104,10 @@ Kafka messages. Details: [docs/architecture.md](docs/architecture.md) and
 ├── backend/
 │   ├── ingestion-service/     Log ingestion API (port 8081)
 │   └── incident-service/      Incident API (port 8082)
-├── analysis-service/          Python FastAPI service (port 8000)
+├── analysis-service/          Incident analysis API, Python/FastAPI (port 8000)
 ├── frontend/                  React + TypeScript + Vite dashboard
 ├── database/init/             PostgreSQL initialization (schemas)
-├── sample-data/               Demo log events and a loader script
+├── sample-data/               Demo log events, a loader script, labelled analysis scenarios
 ├── docs/                      Architecture, API, database and configuration notes
 ├── screenshots/               Dashboard screenshots (added in later phases)
 ├── docker-compose.yml
@@ -127,6 +146,7 @@ their default ports.
 | <http://localhost:8082/api/v1/incidents> | Incident API |
 | <http://localhost:8081/actuator/health> | Ingestion service health |
 | <http://localhost:8082/actuator/health> | Incident service health |
+| <http://localhost:8000/api/v1/analysis/incidents/{id}> | Analysis API (`POST` to analyze, `GET` for the latest result) |
 | <http://localhost:8000/health> | Analysis service health |
 | <http://localhost:8000/docs> | Analysis service OpenAPI docs |
 
@@ -135,8 +155,8 @@ Stop the stack with `docker compose down` (add `-v` to also delete the PostgreSQ
 ### Try the APIs with demo data
 
 ```bash
-# Send 10 synthetic events (demo data) and wait for the incidents created from them
-python sample-data/send_sample_logs.py --application demo-shop-trial
+# Send 10 synthetic events (demo data), wait for the incidents created from them and analyze them
+python sample-data/send_sample_logs.py --application demo-shop-trial --analyze
 ```
 
 The ten events contain three occurrences of the same payment timeout, two occurrences of a
@@ -148,7 +168,16 @@ Incidents for 'demo-shop-trial' (created automatically via Kafka):
     3 x  payment-service    OPEN    java.net.SocketTimeoutException: Payment authorization failed
     1 x  catalog-service    OPEN    java.lang.NullPointerException: Failed to render product page
     1 x  inventory-service  OPEN    org.springframework.dao.DataAccessResourceFailureException: Unable to ...
+
+Analysis (rule-based; potential causes, not confirmed root causes):
+  checkout-service   DOWNSTREAM_DEPENDENCY  HIGH    Failure propagated from payment-service (SocketTimeoutException)
+  payment-service    TIMEOUT                HIGH    Timeout waiting for a downstream dependency called from GatewayClient.authorize
+  catalog-service    APPLICATION_CODE       MEDIUM  NullPointerException in application code at ProductMapper.toView (ProductMapper.
+  inventory-service  DATABASE               MEDIUM  Database connectivity or connection-pool problem (accessed from StockRepository.
 ```
+
+The single-occurrence incidents are capped at `MEDIUM`; every result lists its evidence, the
+confidence calculation and its limitations.
 
 Running it again with the same `--application` adds the new occurrences to the same open
 incidents. Query the incident API directly:
@@ -156,6 +185,8 @@ incidents. Query the incident API directly:
 ```bash
 curl 'http://localhost:8082/api/v1/incidents?application=demo-shop-trial&status=OPEN'
 curl 'http://localhost:8082/api/v1/incidents/<incident-id>'
+curl -X POST 'http://localhost:8000/api/v1/analysis/incidents/<incident-id>'
+curl 'http://localhost:8000/api/v1/analysis/incidents/<incident-id>/history'
 ```
 
 Endpoints, fields, example responses and error codes: [docs/api.md](docs/api.md). Inspecting
@@ -168,6 +199,7 @@ curl http://localhost:8081/actuator/health
 curl http://localhost:8081/actuator/health/readiness   # includes the database connection
 curl http://localhost:8082/actuator/health
 curl http://localhost:8000/health
+curl http://localhost:8000/health/readiness             # includes the database connection
 curl http://localhost:3000/api/ingestion/actuator/health    # through the dashboard proxy
 
 docker compose exec postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
@@ -211,9 +243,11 @@ cd analysis-service
 python -m venv .venv
 source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-uvicorn analysis_service.main:app --reload --port 8000
-pytest
+pytest                            # API/persistence tests start PostgreSQL with Testcontainers
 ruff check .
+python -m evaluation              # evaluation on the labelled synthetic scenarios
+# Run on the host (needs PostgreSQL; analysis requests also need the other two services):
+# export DB_PORT='<POSTGRES_PORT>' DB_PASSWORD='<POSTGRES_PASSWORD>'; python -m analysis_service
 ```
 
 **Dashboard**
@@ -237,6 +271,7 @@ No credentials are stored in source files.
 
 - [docs/architecture.md](docs/architecture.md) — components, request routing, health checks, logging
 - [docs/api.md](docs/api.md) — REST endpoints with examples and error format
+- [docs/analysis.md](docs/analysis.md) — how incidents are analyzed: normalization, stack traces, rules, confidence, similarity, evaluation and limitations
 - [docs/events.md](docs/events.md) — Kafka topics, `ErrorEventCreated` contract, outbox, correlation, idempotency, retries and dead-letter topic
 - [docs/database.md](docs/database.md) — data model, constraints, indexes and migrations
 - [docs/configuration.md](docs/configuration.md) — environment variables and service settings
@@ -247,8 +282,8 @@ No credentials are stored in source files.
 | --- | --- | --- |
 | 1 | Project foundation: services, dashboard shell, Docker environment, tests | Done |
 | 2 | Backend services and data model: ingestion API, fingerprinting, incident API, PostgreSQL schema, validation, structured logging | Done |
-| 3 | Event streaming and correlation: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic | **Current** |
-| 4 | Root cause analysis: analysis service evaluates incidents and ranks likely causes with evidence | Planned |
+| 3 | Event streaming and correlation: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic | Done |
+| 4 | Root cause analysis: rule-based analysis service with recurring patterns, related incidents and ranked potential causes with evidence | **Current** |
 | 5 | Dashboard integration: overview, error monitoring and root cause pages use real data | Planned |
 | 6 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |
 

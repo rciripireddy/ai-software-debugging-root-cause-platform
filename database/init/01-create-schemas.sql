@@ -4,3 +4,5 @@
 
 CREATE SCHEMA IF NOT EXISTS ingestion;
 CREATE SCHEMA IF NOT EXISTS incident;
+-- analysis-service also creates its schema on startup, for databases initialized earlier.
+CREATE SCHEMA IF NOT EXISTS analysis;

@@ -15,4 +15,5 @@ RUN pip install .
 
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "analysis_service.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Starts uvicorn with the service's own logging configuration (see analysis_service/__main__.py).
+CMD ["python", "-m", "analysis_service"]

@@ -2,18 +2,21 @@ import { ListChecks } from 'lucide-react'
 import { EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
 
-const PLANNED_OUTPUTS = [
+const ANALYSIS_OUTPUTS = [
   {
-    title: 'Correlated signals',
-    description: 'Errors, services and deployments that occurred together within an incident window.',
+    title: 'Recurring patterns',
+    description:
+      'Occurrences over time, repeated exceptions and code locations, and errors that preceded the incident in the same trace.',
   },
   {
-    title: 'Recurring failure history',
-    description: 'Previous incidents that share the same error fingerprint.',
+    title: 'Related incidents',
+    description:
+      'Incidents with the same error, exception, code location or message, ranked by a documented similarity score.',
   },
   {
-    title: 'Candidate root causes',
-    description: 'Ranked explanations, each with the supporting evidence used to produce it.',
+    title: 'Potential root causes',
+    description:
+      'Ranked candidates with a LOW, MEDIUM or HIGH confidence level, the supporting evidence and known limitations.',
   },
 ]
 
@@ -36,13 +39,13 @@ export function RootCauseAnalysisPage() {
         </section>
 
         <section className="card" aria-labelledby="analysis-heading">
-          <h2 id="analysis-heading">Planned analysis output</h2>
+          <h2 id="analysis-heading">Analysis output</h2>
           <p className="muted">
-            Analysis is not implemented yet. The analysis service currently exposes only a health
-            endpoint.
+            The analysis service provides rule-based incident analysis through its API. This page is
+            not connected to it yet (planned for Phase 5).
           </p>
           <ul className="feature-list">
-            {PLANNED_OUTPUTS.map((output) => (
+            {ANALYSIS_OUTPUTS.map((output) => (
               <li key={output.title}>
                 <strong>{output.title}</strong>
                 <span>{output.description}</span>

@@ -1,15 +1,20 @@
 # Database model
 
-PostgreSQL 17, one database with a schema per backend service. Each service creates and evolves
-its own schema with [Flyway](https://documentation.red-gate.com/flyway) migrations that run when
-the service starts.
+PostgreSQL 17, one database with a schema per service. Each service creates and evolves its own
+schema with versioned SQL migrations that run when the service starts:
+[Flyway](https://documentation.red-gate.com/flyway) in the Spring Boot services and a small
+runner with the same file naming in analysis-service.
 
 | Schema | Owner | Tables | Migrations |
 | --- | --- | --- | --- |
 | `ingestion` | ingestion-service | `applications`, `error_events`, `outbox_events` | `backend/ingestion-service/src/main/resources/db/migration/` |
 | `incident` | incident-service | `incidents`, `incident_events`, `processed_events` | `backend/incident-service/src/main/resources/db/migration/` |
+| `analysis` | analysis-service | `incident_analyses` | `analysis-service/src/analysis_service/repositories/migrations/` |
 
-Each schema also contains Flyway's `flyway_schema_history` table. Hibernate runs with
+The `ingestion` and `incident` schemas also contain Flyway's `flyway_schema_history` table, the
+`analysis` schema the equivalent `schema_migrations` table (version, description, SHA-256
+checksum; analysis-service refuses to start if an applied migration file was changed). Hibernate
+runs with
 `ddl-auto: validate`, so a service refuses to start if its entities and the migrated schema
 disagree. Applied migrations are never edited; changes are made with new migrations.
 
@@ -19,6 +24,7 @@ disagree. Applied migrations are never edited; changes are made with new migrati
 | `ingestion` V2 | 3 | `outbox_events` (transactional outbox) |
 | `incident` V1 | 2 | `incidents`, `incident_events`, with foreign keys into the `ingestion` schema |
 | `incident` V2 | 3 | Copies application and event details into the incident tables, drops the foreign keys into `ingestion`, adds `processed_events` |
+| `analysis` V1 | 4 | `incident_analyses` |
 
 ```mermaid
 erDiagram
@@ -100,11 +106,26 @@ erDiagram
         uuid incident_id
         timestamptz processed_at
     }
+    incident_analyses {
+        uuid id PK
+        uuid incident_id
+        integer revision
+        varchar analysis_version
+        timestamptz generated_at
+        text summary
+        varchar confidence
+        varchar primary_category
+        varchar primary_title
+        integer events_analyzed
+        integer related_incident_count
+        jsonb result
+        timestamptz created_at
+    }
 ```
 
-The two schemas are not connected by foreign keys. `incidents.application_id`,
+The schemas are not connected by foreign keys. `incidents.application_id`,
 `incident_events.error_event_id` and `processed_events.event_id` hold ingestion-side IDs taken
-from Kafka messages.
+from Kafka messages; `incident_analyses.incident_id` holds an incident-service ID.
 
 ## Tables
 
@@ -149,6 +170,18 @@ change. `outcome` is `INCIDENT_CREATED`, `INCIDENT_UPDATED`, `IGNORED_SEVERITY` 
 `ALREADY_ASSIGNED`. A message whose `event_id` is already present is skipped; this is what makes
 the consumer idempotent. See [events.md](events.md#idempotency).
 
+### `analysis.incident_analyses`
+
+One row per analysis of an incident. Every `POST /api/v1/analysis/incidents/{id}` adds a row with
+the next `revision` for that incident; earlier revisions are kept as history. `result` (JSONB)
+holds the complete result exactly as the API returns it (candidates, evidence, patterns, related
+incidents, limitations). `summary`, `confidence`, `primary_category`, `primary_title`,
+`events_analyzed` and `related_incident_count` repeat its key values as columns for listing and
+querying. `analysis_version` identifies the rules that produced the result. Related incidents are
+kept inside `result` rather than in a separate table, because they are only read together with
+their analysis. Concurrent analyses of the same incident are serialized with a transaction-level
+advisory lock, so revisions stay sequential.
+
 ## Integrity rules
 
 | Rule | Enforced by |
@@ -162,6 +195,8 @@ the consumer idempotent. See [events.md](events.md#idempotency).
 | An error event belongs to at most one incident | Primary key of `incident_events` |
 | A Kafka message is processed at most once | Primary key of `processed_events` |
 | Outbox retry counts are never negative | `ck_outbox_events_attempt_count` |
+| One row per incident and analysis revision; revisions start at 1 | `uq_incident_analyses_incident_revision`, `ck_incident_analyses_revision` |
+| Analysis confidence is `LOW`, `MEDIUM` or `HIGH` | `ck_incident_analyses_confidence` |
 
 ## Indexes
 
@@ -176,6 +211,8 @@ the consumer idempotent. See [events.md](events.md#idempotency).
 | `ix_incidents_last_seen_at` | Ordering the incident list |
 | `ix_incidents_application_id` | Incidents per application |
 | `ix_incident_events_incident_timestamp` | An incident's most recent events |
+| `uq_incident_analyses_incident_revision` | Latest analysis and history of an incident |
+| `ix_incident_analyses_primary_category` | Analyses by suggested category, newest first |
 
 ## Design notes
 
@@ -192,9 +229,12 @@ the consumer idempotent. See [events.md](events.md#idempotency).
   - On a brand-new database, incident `V1` (from Phase 2, not editable) still references the
     ingestion tables, so ingestion-service must have migrated first. Docker Compose ensures this
     by starting incident-service after ingestion-service is healthy.
+- **analysis-service reads no other schema.** It gets incidents and events through the incident
+  and ingestion REST APIs and writes only to `analysis`. See
+  [analysis.md](analysis.md#why-rest-instead-of-reading-the-other-schemas).
 - **UUID keys.** Error events, outbox messages and incidents use time-ordered UUIDs (version 7)
-  generated by the application, which keeps primary key inserts sequential. Applications use
-  PostgreSQL's `gen_random_uuid()`.
+  generated by the application, which keeps primary key inserts sequential. Applications and
+  stored analyses use PostgreSQL's `gen_random_uuid()`.
 - **Statuses and severities as checked `varchar`** rather than PostgreSQL enum types, which are
   harder to change in later migrations.
 
@@ -207,11 +247,17 @@ docker compose exec postgres psql -U rootcause -d rootcause
 ```sql
 \dt ingestion.*
 \dt incident.*
+\dt analysis.*
 SELECT version, description, success FROM incident.flyway_schema_history;
 
 -- Outbox: pending messages and retries
 SELECT count(*) FILTER (WHERE published_at IS NULL) AS pending, max(attempt_count) AS max_attempts
 FROM ingestion.outbox_events;
+
+-- Stored analyses: latest revision per incident
+SELECT DISTINCT ON (incident_id) incident_id, revision, confidence, primary_category, primary_title
+FROM analysis.incident_analyses ORDER BY incident_id, revision DESC;
+SELECT version, description, applied_at FROM analysis.schema_migrations;
 
 -- Incidents created by the consumer, with what happened to each message
 SELECT outcome, count(*) FROM incident.processed_events GROUP BY outcome;

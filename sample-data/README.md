@@ -1,7 +1,8 @@
 # sample-data
 
 **Demo data.** Synthetic log events from a fictional e-commerce system (`demo-shop`), used to
-demonstrate and manually test the platform. None of it comes from a real system.
+demonstrate and manually test the platform, and labelled scenarios for evaluating the analysis.
+None of it comes from a real system.
 
 ## `application-logs.jsonl`
 
@@ -34,3 +35,32 @@ until incident-service has correlated the `ERROR` events through Kafka (up to 30
 prints the resulting incidents. `--application` sends the events under another application name,
 which gives a fresh set of incidents; running it again with the same name adds occurrences to the
 existing open incidents. It uses only the Python standard library.
+
+Analyze one of the printed incidents:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analysis/incidents/<incident-id>
+```
+
+## `analysis-scenarios/`
+
+Labelled synthetic scenarios for evaluating the analysis engine: 16 scenarios, 41 events (payment
+timeouts and the checkout failures they cause, database pool exhaustion and connection refusal,
+null pointer, expired JWT, malformed JSON, Python timeout and `KeyError`, out of memory, missing
+configuration, a 503 from an external API, unclassifiable errors, the same error in production,
+and a timeout in a different code path).
+
+- `scenarios.json` — runtime input only: events in the ingestion API format, grouped under
+  neutral IDs (`S01`…`S16`).
+- `labels.json` — expected primary category per scenario and the scenario pairs expected to be
+  related. Read only by the evaluation code and tests, never by the analysis service.
+
+```bash
+cd analysis-service
+python -m evaluation            # engine only
+python -m evaluation --live     # sends the events through the running stack and analyzes the incidents
+```
+
+Methodology and results: [docs/analysis.md](../docs/analysis.md#evaluation-on-synthetic-scenarios).
+The scenarios were written together with the rules, so the results show that the rules behave as
+designed, not how accurate they would be on real incidents.

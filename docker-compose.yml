@@ -1,12 +1,16 @@
 name: root-cause-platform
 
-# Settings shared by the Spring Boot services. Credentials come from .env.
-x-spring-service-environment: &spring-service-environment
+# Database settings shared by all services that use PostgreSQL. Credentials come from .env.
+x-database-environment: &database-environment
   DB_HOST: postgres
   DB_PORT: "5432"
   DB_NAME: ${POSTGRES_DB:-rootcause}
   DB_USERNAME: ${POSTGRES_USER:-rootcause}
   DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set. Copy .env.example to .env and set a password.}
+
+# Settings shared by the Spring Boot services.
+x-spring-service-environment: &spring-service-environment
+  <<: *database-environment
   KAFKA_BOOTSTRAP_SERVERS: kafka:29092
   # One JSON (Elastic Common Schema) log record per line, ready for log shipping.
   LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
@@ -108,10 +112,21 @@ services:
 
   analysis-service:
     build: ./analysis-service
+    environment:
+      <<: *database-environment
+      # Incidents and events are read through the other services' REST APIs, on request.
+      INCIDENT_SERVICE_URL: http://incident-service:8082
+      INGESTION_SERVICE_URL: http://ingestion-service:8081
+      LOG_FORMAT: json
     ports:
       - "${ANALYSIS_SERVICE_PORT:-8000}:8000"
+    depends_on:
+      # Migrations of the analysis schema run at startup. incident-service and
+      # ingestion-service are only needed when an analysis is requested (503 otherwise).
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/readiness', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -3,9 +3,12 @@
 Usage:
     python sample-data/send_sample_logs.py [--url http://localhost:8081]
         [--application demo-shop] [--incidents-url http://localhost:8082] [--no-wait]
+        [--analyze] [--analysis-url http://localhost:8000]
 
 After sending, the script waits until incident-service has correlated the ERROR events
-into incidents (through Kafka) and prints them. Uses only the Python standard library.
+into incidents (through Kafka) and prints them. With --analyze, it then analyzes each
+incident through analysis-service and prints the most likely cause it suggests. Uses only
+the Python standard library.
 Every run stores the events again, as new rows.
 """
 
@@ -22,10 +25,10 @@ SAMPLE_FILE = Path(__file__).with_name("application-logs.jsonl")
 CORRELATED_SEVERITIES = {"ERROR", "FATAL"}
 
 
-def post_json(url: str, body: dict) -> dict:
+def post_json(url: str, body: dict | None) -> dict:
     request = urllib.request.Request(
         url,
-        data=json.dumps(body).encode("utf-8"),
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -70,6 +73,16 @@ def main() -> int:
     parser.add_argument(
         "--no-wait", action="store_true", help="do not wait for incidents"
     )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="analyze each incident through analysis-service",
+    )
+    parser.add_argument(
+        "--analysis-url",
+        default="http://localhost:8000",
+        help="analysis-service base URL",
+    )
     args = parser.parse_args()
 
     events = [
@@ -109,6 +122,21 @@ def main() -> int:
         print(
             f"  {incident['occurrenceCount']:>3} x  {incident['application']['service']:<17}"
             f"  {incident['status']:<6}  {incident['title'][:70]}"
+        )
+
+    if not args.analyze:
+        return 0
+    print("\nAnalysis (rule-based; potential causes, not confirmed root causes):")
+    for incident in incidents:
+        url = f"{args.analysis_url.rstrip('/')}/api/v1/analysis/incidents/{incident['id']}"
+        try:
+            primary = post_json(url, None)["primaryCandidate"]
+        except urllib.error.URLError as error:
+            print(f"Cannot analyze via {args.analysis_url}: {error}", file=sys.stderr)
+            return 1
+        print(
+            f"  {incident['application']['service']:<17}  {primary['category']:<21}"
+            f"  {primary['confidence']:<6}  {primary['title'][:80]}"
         )
     return 0
 

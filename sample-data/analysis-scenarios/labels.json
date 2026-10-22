@@ -1,0 +1,28 @@
+{
+  "description": "Expected results for scenarios.json. Used only by the evaluation (analysis-service/evaluation) and its tests; the analysis service never reads this file.",
+  "scenarios": {
+    "S01": { "name": "Payment gateway read timeouts (staging)", "expectedCategory": "TIMEOUT" },
+    "S02": { "name": "Checkout failures caused by the payment timeouts (same trace IDs)", "expectedCategory": "DOWNSTREAM_DEPENDENCY" },
+    "S03": { "name": "Database connection pool exhausted", "expectedCategory": "DATABASE" },
+    "S04": { "name": "Database connection refused", "expectedCategory": "DATABASE" },
+    "S05": { "name": "NullPointerException in product rendering", "expectedCategory": "APPLICATION_CODE" },
+    "S06": { "name": "Expired JWT rejected", "expectedCategory": "AUTHENTICATION" },
+    "S07": { "name": "Malformed JSON request body", "expectedCategory": "SERIALIZATION" },
+    "S08": { "name": "Python service: HTTP read timeout to a model API", "expectedCategory": "TIMEOUT" },
+    "S09": { "name": "Python service: KeyError in pricing code", "expectedCategory": "APPLICATION_CODE" },
+    "S10": { "name": "OutOfMemoryError in a report job", "expectedCategory": "RESOURCE_EXHAUSTION" },
+    "S11": { "name": "Unresolved configuration placeholder", "expectedCategory": "CONFIGURATION" },
+    "S12": { "name": "Carrier API returns 503", "expectedCategory": "DOWNSTREAM_DEPENDENCY" },
+    "S13": { "name": "Custom business exception without a recognizable cause", "expectedCategory": "UNKNOWN" },
+    "S14": { "name": "Same payment timeout in production", "expectedCategory": "TIMEOUT" },
+    "S15": { "name": "Refund client timeout (same service and exception, different code path)", "expectedCategory": "TIMEOUT" },
+    "S16": { "name": "Single export failure without a stack trace", "expectedCategory": "UNKNOWN" }
+  },
+  "relatedPairs": [
+    ["S01", "S02"],
+    ["S01", "S14"],
+    ["S01", "S15"],
+    ["S14", "S15"]
+  ],
+  "relatedPairsNote": "All other pairs of scenarios are expected to be unrelated."
+}

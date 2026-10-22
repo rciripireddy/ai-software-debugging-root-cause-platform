@@ -14,7 +14,7 @@ const PIPELINE_STAGES = [
   { name: 'Log ingestion API', component: 'ingestion-service', state: 'REST API implemented' },
   { name: 'Event streaming', component: 'Kafka (KRaft)', state: 'Outbox → Kafka implemented' },
   { name: 'Incident correlation', component: 'incident-service', state: 'Automatic · Kafka consumer' },
-  { name: 'Root cause analysis', component: 'analysis-service', state: 'Planned · Phase 4' },
+  { name: 'Root cause analysis', component: 'analysis-service', state: 'Rule-based API implemented' },
 ]
 
 export function OverviewPage() {
