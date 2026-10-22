@@ -1,10 +1,51 @@
-import { FlaskConical, Menu, Network, X } from 'lucide-react'
+import { FlaskConical, LogOut, Menu, Network, X } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { useApi } from '../api/ApiContext'
+import { useAuth } from '../auth/AuthContext'
+import { ROLE_LABELS } from '../auth/types'
 import { NAV_ITEMS } from '../navigation'
 
-export const APP_VERSION = '0.5.0'
+export const APP_VERSION = '0.6.0'
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  return (parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : name.slice(0, 2)).toUpperCase()
+}
+
+function UserCard() {
+  const { session, mode, logout } = useAuth()
+  const [signingOut, setSigningOut] = useState(false)
+  if (!session) return null
+  const { displayName, username, role } = session.user
+
+  return (
+    <div className="user-card">
+      <span className="user-card__avatar" aria-hidden="true">
+        {initials(displayName)}
+      </span>
+      <span className="user-card__text">
+        <strong title={`${displayName} (${username})`}>{displayName}</strong>
+        <small>{mode === 'demo' ? 'Demo session' : ROLE_LABELS[role]}</small>
+      </span>
+      {mode === 'live' && (
+        <button
+          type="button"
+          className="icon-button user-card__sign-out"
+          onClick={() => {
+            setSigningOut(true)
+            void logout()
+          }}
+          disabled={signingOut}
+          aria-label="Sign out"
+          title="Sign out"
+        >
+          <LogOut size={18} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -54,8 +95,11 @@ export function AppLayout() {
         </nav>
 
         <footer className="sidebar__footer">
-          <span className={`env-pill env-pill--${mode}`}>{mode === 'live' ? 'Live data' : 'Demo data'}</span>
-          <span>v{APP_VERSION}</span>
+          <UserCard />
+          <div className="sidebar__meta">
+            <span className={`env-pill env-pill--${mode}`}>{mode === 'live' ? 'Live data' : 'Demo data'}</span>
+            <span>v{APP_VERSION}</span>
+          </div>
         </footer>
       </aside>
 

@@ -24,6 +24,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.rootcauseplatform.ingestion.ApiClient;
+import com.rootcauseplatform.ingestion.TestAuth;
 import com.rootcauseplatform.ingestion.TestcontainersConfiguration;
 
 import tools.jackson.databind.JsonNode;
@@ -51,7 +52,7 @@ class LogIngestionApiTests {
 
     @BeforeEach
     void setUp() {
-        api = new ApiClient(port);
+        api = TestAuth.client(port);
         applicationName = "test-app-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
@@ -296,6 +297,7 @@ class LogIngestionApiTests {
     void propagatesAProvidedCorrelationId() {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/logs/" + UUID.randomUUID()))
                 .header("X-Correlation-Id", "test-correlation-123")
+                .header("Authorization", "Bearer " + TestAuth.token("VIEWER"))
                 .GET()
                 .build();
 

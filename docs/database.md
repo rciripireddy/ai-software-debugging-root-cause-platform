@@ -9,6 +9,7 @@ runner with the same file naming in analysis-service.
 | --- | --- | --- | --- |
 | `ingestion` | ingestion-service | `applications`, `error_events`, `outbox_events` | `backend/ingestion-service/src/main/resources/db/migration/` |
 | `incident` | incident-service | `incidents`, `incident_events`, `processed_events` | `backend/incident-service/src/main/resources/db/migration/` |
+| `auth` | incident-service | `users` | same as `incident` (created by incident `V3`) |
 | `analysis` | analysis-service | `incident_analyses` | `analysis-service/src/analysis_service/repositories/migrations/` |
 
 The `ingestion` and `incident` schemas also contain Flyway's `flyway_schema_history` table, the
@@ -25,6 +26,7 @@ disagree. Applied migrations are never edited; changes are made with new migrati
 | `ingestion` V3 | 5 | Indexes for listing events newest first and counting recently received events |
 | `incident` V1 | 2 | `incidents`, `incident_events`, with foreign keys into the `ingestion` schema |
 | `incident` V2 | 3 | Copies application and event details into the incident tables, drops the foreign keys into `ingestion`, adds `processed_events` |
+| `incident` V3 | 6 | Schema `auth` with `users` (accounts for sign-in) |
 | `analysis` V1 | 4 | `incident_analyses` |
 
 ```mermaid
@@ -107,6 +109,16 @@ erDiagram
         uuid incident_id
         timestamptz processed_at
     }
+    users {
+        uuid id PK
+        varchar username
+        varchar display_name
+        varchar password_hash
+        varchar role
+        boolean enabled
+        timestamptz created_at
+        timestamptz updated_at
+    }
     incident_analyses {
         uuid id PK
         uuid incident_id
@@ -183,6 +195,19 @@ kept inside `result` rather than in a separate table, because they are only read
 their analysis. Concurrent analyses of the same incident are serialized with a transaction-level
 advisory lock, so revisions stay sequential.
 
+### `auth.users`
+
+Accounts for signing in to the dashboard and the APIs (see [security.md](security.md)).
+`username` is unique and stored in lower case (sign-in is case-insensitive). `password_hash` holds
+a BCrypt hash with its algorithm prefix (`{bcrypt}$2a$12$...`), never a password. `role` is
+`ADMIN` or `VIEWER`; a disabled account (`enabled = false`) cannot sign in. Accounts are created
+at startup from the `AUTH_BOOTSTRAP_*` variables; there is no user-management API yet, so further
+changes are made in SQL, for example:
+
+```sql
+UPDATE auth.users SET enabled = false, updated_at = now() WHERE username = 'viewer';
+```
+
 ## Integrity rules
 
 | Rule | Enforced by |
@@ -198,6 +223,9 @@ advisory lock, so revisions stay sequential.
 | Outbox retry counts are never negative | `ck_outbox_events_attempt_count` |
 | One row per incident and analysis revision; revisions start at 1 | `uq_incident_analyses_incident_revision`, `ck_incident_analyses_revision` |
 | Analysis confidence is `LOW`, `MEDIUM` or `HIGH` | `ck_incident_analyses_confidence` |
+| Usernames are unique and lower case | `uq_users_username`, `ck_users_username_lowercase` |
+| A user's role is `ADMIN` or `VIEWER` | `ck_users_role` |
+| Only encoded password hashes are stored | `ck_users_password_hash_encoded` (`{algorithm}` prefix and at least 20 more characters) |
 
 ## Indexes
 
@@ -251,6 +279,7 @@ docker compose exec postgres psql -U rootcause -d rootcause
 \dt ingestion.*
 \dt incident.*
 \dt analysis.*
+\dt auth.*
 SELECT version, description, success FROM incident.flyway_schema_history;
 
 -- Outbox: pending messages and retries
@@ -266,4 +295,7 @@ SELECT version, description, applied_at FROM analysis.schema_migrations;
 SELECT outcome, count(*) FROM incident.processed_events GROUP BY outcome;
 SELECT service_name, occurrence_count, status, first_seen_at, last_seen_at
 FROM incident.incidents ORDER BY last_seen_at DESC;
+
+-- Accounts (never select password_hash into shared output)
+SELECT username, display_name, role, enabled, created_at FROM auth.users ORDER BY username;
 ```

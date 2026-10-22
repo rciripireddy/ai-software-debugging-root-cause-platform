@@ -1,0 +1,17 @@
+# Test-only settings, loaded in addition to src/main/resources/application.yml. These values
+# exist only for the automated tests and are not used by any deployment.
+app:
+  auth:
+    jwt-secret: test-only-jwt-secret-for-automated-tests-0001
+    service-token: test-only-internal-service-token-000000001
+    login-limit:
+      # Tests share one client address; the per-client limit is tested separately.
+      max-failures-per-client: 10000
+    bootstrap:
+      admin:
+        username: Test-Admin
+        password: test-only-admin-password-1
+        display-name: Test Administrator
+      viewer:
+        username: test-viewer
+        password: test-only-viewer-password-1

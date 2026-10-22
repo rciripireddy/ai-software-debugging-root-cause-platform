@@ -29,7 +29,7 @@ class IncidentServiceApplicationTests {
 
     @BeforeEach
     void setUp() {
-        api = new ApiClient(port);
+        api = TestAuth.client(port);
     }
 
     @Test
@@ -60,6 +60,18 @@ class IncidentServiceApplicationTests {
                 "select table_name from information_schema.tables where table_schema = 'incident' order by 1",
                 String.class))
                 .containsExactly("flyway_schema_history", "incident_events", "incidents", "processed_events");
+    }
+
+    @Test
+    void flywayCreatesTheUserAccountsTableInItsOwnSchema() {
+        assertThat(jdbcTemplate.queryForList(
+                "select table_name from information_schema.tables where table_schema = 'auth' order by 1",
+                String.class))
+                .containsExactly("users");
+        assertThat(jdbcTemplate.queryForList("""
+                select version from incident.flyway_schema_history
+                where success and version is not null order by installed_rank""", String.class))
+                .containsExactly("1", "2", "3");
     }
 
     @Test

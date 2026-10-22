@@ -25,7 +25,7 @@ class IngestionServiceApplicationTests {
 
     @BeforeEach
     void setUp() {
-        api = new ApiClient(port);
+        api = TestAuth.client(port);
     }
 
     @Test

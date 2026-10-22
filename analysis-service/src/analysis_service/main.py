@@ -8,9 +8,10 @@ from fastapi import FastAPI
 
 from analysis_service import __version__
 from analysis_service.analysis.engine import AnalysisSettings
-from analysis_service.api.middleware import CorrelationIdMiddleware
+from analysis_service.api.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
 from analysis_service.api.problems import register_problem_handlers
 from analysis_service.api.routes import health_router, router
+from analysis_service.api.security import FixedWindowRateLimiter, TokenVerifier, require_secret
 from analysis_service.clients.backend import BackendClient, create_http_client
 from analysis_service.config import Settings, get_settings
 from analysis_service.logging_config import SERVICE_NAME
@@ -30,6 +31,17 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config = settings or get_settings()
+        jwt_secret = require_secret(config.auth_jwt_secret.get_secret_value(), "AUTH_JWT_SECRET")
+        service_token = require_secret(
+            config.internal_service_token.get_secret_value(), "INTERNAL_SERVICE_TOKEN"
+        )
+        app.state.token_verifier = TokenVerifier(
+            jwt_secret, config.auth_issuer, config.auth_audience
+        )
+        app.state.auth_cookie_name = config.auth_cookie_name
+        app.state.analysis_rate_limiter = FixedWindowRateLimiter(
+            config.analysis_rate_limit_per_minute, 60
+        )
         pool = await open_database(
             config.database_conninfo,
             min_size=config.db_pool_min_size,
@@ -37,7 +49,9 @@ def create_app(
             timeout=config.db_connect_timeout.total_seconds(),
             attempts=config.db_startup_attempts,
         )
-        http = create_http_client(config.http_timeout.total_seconds(), backend_transport)
+        http = create_http_client(
+            config.http_timeout.total_seconds(), service_token, backend_transport
+        )
         backend = BackendClient(
             http,
             config.incident_service_url,
@@ -73,6 +87,7 @@ def create_app(
         lifespan=lifespan,
     )
     register_problem_handlers(app)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
     app.include_router(health_router)
     app.include_router(router)

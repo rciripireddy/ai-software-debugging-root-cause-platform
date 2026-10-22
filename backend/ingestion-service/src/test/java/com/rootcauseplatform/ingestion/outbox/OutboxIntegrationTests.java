@@ -42,6 +42,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.testcontainers.kafka.KafkaContainer;
 
 import com.rootcauseplatform.ingestion.ApiClient;
+import com.rootcauseplatform.ingestion.TestAuth;
 import com.rootcauseplatform.ingestion.TestcontainersConfiguration;
 import com.rootcauseplatform.ingestion.domain.Severity;
 import com.rootcauseplatform.ingestion.messaging.ErrorEventCreated;
@@ -91,7 +92,7 @@ class OutboxIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        api = new ApiClient(port);
+        api = TestAuth.client(port);
         // Start every test with an empty outbox so batches contain only this test's messages.
         jdbcTemplate.update("delete from ingestion.outbox_events");
     }
@@ -232,6 +233,7 @@ class OutboxIntegrationTests {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/logs"))
                 .header("Content-Type", "application/json")
                 .header("X-Correlation-Id", "outbox-test-correlation")
+                .header("X-Api-Key", TestAuth.API_KEY)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(event(application))))
                 .build();
         ApiClient.Response response = api.send(request);

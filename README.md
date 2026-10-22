@@ -7,12 +7,12 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 5 — dashboard integration.**
+> **Project status: Phase 6 — authentication and security hardening.**
 > Log events are ingested, published reliably to Kafka and correlated into incidents
 > automatically. The analysis service suggests **potential** root causes with evidence, using
 > deterministic rules (no machine learning, no external AI service). The React dashboard shows
-> all of it from the real APIs, and can also run as a clearly labelled demo with bundled
-> synthetic data. See [Roadmap](#roadmap).
+> all of it from the real APIs after signing in, and can also run as a clearly labelled demo with
+> bundled synthetic data. See [Roadmap](#roadmap).
 
 ## What works today
 
@@ -56,6 +56,12 @@ React dashboard.
   charts, error events with filters and stack traces, incidents with filters and details, root
   cause analysis with evidence, confidence and related incidents, and live service health. Every
   page handles loading, empty and unavailable states, and works from 390 px phones to desktops.
+- **Authentication and authorization** (see [docs/security.md](docs/security.md)): sign-in with
+  username and password (BCrypt hashes), signed access tokens in an HttpOnly, SameSite=Strict
+  cookie with CSRF protection, `VIEWER` and `ADMIN` roles enforced by every service, an ingestion
+  API key for monitored applications and an internal service token for analysis-service's calls.
+  Also rate limits for sign-in, events and analyses, request size limits, security headers and
+  structured security logs.
 - **Docker Compose** environment with all services, PostgreSQL and a single-node Kafka broker
   (KRaft), with health checks and persistent volumes.
 - **Demo data**: synthetic log events in [`sample-data/`](sample-data/) and a script that sends them
@@ -105,12 +111,12 @@ Kafka messages. analysis-service runs on request and is not part of that pipelin
 .
 ├── backend/
 │   ├── ingestion-service/     Log ingestion API (port 8081)
-│   └── incident-service/      Incident API (port 8082)
+│   └── incident-service/      Incident API, user accounts and sign-in (port 8082)
 ├── analysis-service/          Incident analysis API, Python/FastAPI (port 8000)
 ├── frontend/                  React + TypeScript + Vite dashboard
 ├── database/init/             PostgreSQL initialization (schemas)
 ├── sample-data/               Demo log events, a loader script, labelled analysis scenarios
-├── docs/                      Architecture, API, database and configuration notes
+├── docs/                      Architecture, API, database, configuration and security notes
 ├── screenshots/               Dashboard screenshots
 ├── docker-compose.yml
 └── .env.example               Template for local configuration
@@ -132,10 +138,18 @@ On Windows, Docker Desktop requires WSL 2.
 
 ```bash
 cp .env.example .env              # Windows PowerShell: Copy-Item .env.example .env
-# Edit .env and set POSTGRES_PASSWORD
+# Edit .env: set POSTGRES_PASSWORD, AUTH_JWT_SECRET, INTERNAL_SERVICE_TOKEN, INGESTION_API_KEY
+# (random values, e.g. from: python -c "import secrets; print(secrets.token_urlsafe(48))")
+# and AUTH_BOOTSTRAP_ADMIN_PASSWORD, the password of the first administrator (12+ characters).
 docker compose up -d --build
 docker compose ps                 # wait until every service reports "healthy"
 ```
+
+Then open <http://localhost:3000> and sign in as `admin` (or the
+`AUTH_BOOTSTRAP_ADMIN_USERNAME` you chose) with your password. The account is created on the
+first start only; change its password after signing in on any shared machine
+([docs/security.md](docs/security.md#initial-accounts)). Optionally set
+`AUTH_BOOTSTRAP_VIEWER_USERNAME`/`_PASSWORD` for a read-only account.
 
 If a host port is already in use (for example, a locally installed PostgreSQL on 5432), change the
 matching `*_PORT` variable in `.env`, e.g. `POSTGRES_PORT=5433`. Containers still reach each other on
@@ -143,8 +157,9 @@ their default ports.
 
 | URL | What |
 | --- | --- |
-| <http://localhost:3000> | **Dashboard** (all APIs are also reachable through it under `/api/ingestion`, `/api/incident`, `/api/analysis`) |
-| <http://localhost:8081/api/v1/logs> | Log ingestion API (`POST`) |
+| <http://localhost:3000> | **Dashboard**, after signing in (all APIs are also reachable through it under `/api/ingestion`, `/api/incident`, `/api/analysis`) |
+| <http://localhost:8082/api/v1/auth/login> | Sign-in API (`POST`) |
+| <http://localhost:8081/api/v1/logs> | Log ingestion API (`POST` with `X-Api-Key`) |
 | <http://localhost:8082/api/v1/incidents> | Incident API |
 | <http://localhost:8081/actuator/health> | Ingestion service health |
 | <http://localhost:8082/actuator/health> | Incident service health |
@@ -160,6 +175,10 @@ Stop the stack with `docker compose down` (add `-v` to also delete the PostgreSQ
 # Send 10 synthetic events (demo data), wait for the incidents created from them and analyze them
 python sample-data/send_sample_logs.py --application demo-shop-trial --analyze
 ```
+
+The script sends the events with `INGESTION_API_KEY` and signs in to read and analyze the
+incidents. Both are taken from environment variables or, for local development, from `.env`
+(the bootstrap admin unless `RCP_USERNAME`/`RCP_PASSWORD` are set); they are never printed.
 
 The ten events contain three occurrences of the same payment timeout, two occurrences of a
 checkout failure, two other errors and three `INFO`/`WARN` events. Example output:
@@ -184,19 +203,23 @@ confidence calculation and its limitations.
 Running it again with the same `--application` adds the new occurrences to the same open
 incidents. Open <http://localhost:3000> to see the events, incidents and analyses in the
 dashboard. For a larger set (16 labelled scenarios across 13 services), run
-`python -m evaluation --live --application demo-store` in `analysis-service/`. Query the incident API directly:
+`python -m evaluation --live --application demo-store` in `analysis-service/` (same
+credentials). To query the APIs directly, sign in first and use the token
+([docs/api.md](docs/api.md#signing-in-with-curl)):
 
 ```bash
-curl 'http://localhost:8082/api/v1/incidents?application=demo-shop-trial&status=OPEN'
-curl 'http://localhost:8082/api/v1/incidents/<incident-id>'
-curl -X POST 'http://localhost:8000/api/v1/analysis/incidents/<incident-id>'
-curl 'http://localhost:8000/api/v1/analysis/incidents/<incident-id>/history'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8082/api/v1/incidents?application=demo-shop-trial&status=OPEN'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8082/api/v1/incidents/<incident-id>'
+curl -H "Authorization: Bearer $TOKEN" -X POST 'http://localhost:8000/api/v1/analysis/incidents/<incident-id>'   # ADMIN only
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8000/api/v1/analysis/incidents/<incident-id>/history'
 ```
 
 Endpoints, fields, example responses and error codes: [docs/api.md](docs/api.md). Inspecting
 topics, consumer lag and the outbox: [docs/events.md](docs/events.md#inspecting-topics-locally).
 
 ### Health check commands
+
+Health endpoints are public; everything else needs credentials.
 
 ```bash
 curl http://localhost:8081/actuator/health
@@ -224,6 +247,10 @@ them with environment variables. The defaults are `localhost:5432` (database and
 docker compose up -d postgres kafka
 # Use the values from .env. PowerShell: $env:DB_PORT='5432'; $env:DB_PASSWORD='...'
 export DB_PORT='<POSTGRES_PORT>' DB_PASSWORD='<POSTGRES_PASSWORD>'
+# Both services also need the auth secrets (see docs/configuration.md#authentication):
+export AUTH_JWT_SECRET='<from .env>' INTERNAL_SERVICE_TOKEN='<from .env>'
+export INGESTION_API_KEY='<from .env>'                 # ingestion-service
+export AUTH_BOOTSTRAP_ADMIN_USERNAME=admin AUTH_BOOTSTRAP_ADMIN_PASSWORD='<from .env>'   # incident-service
 
 cd backend/ingestion-service      # start this one first: incident tables reference its schema
 ./mvnw spring-boot:run            # Windows: .\mvnw.cmd spring-boot:run
@@ -251,7 +278,8 @@ pytest                            # API/persistence tests start PostgreSQL with 
 ruff check .
 python -m evaluation              # evaluation on the labelled synthetic scenarios
 # Run on the host (needs PostgreSQL; analysis requests also need the other two services):
-# export DB_PORT='<POSTGRES_PORT>' DB_PASSWORD='<POSTGRES_PASSWORD>'; python -m analysis_service
+# export DB_PORT='<POSTGRES_PORT>' DB_PASSWORD='<POSTGRES_PASSWORD>' \
+#   AUTH_JWT_SECRET='<from .env>' INTERNAL_SERVICE_TOKEN='<from .env>'; python -m analysis_service
 ```
 
 **Dashboard**
@@ -269,6 +297,12 @@ npm run build:demo                # static demo build in dist-demo/
 
 ## Dashboard
 
+Every page needs a signed-in user. Visiting a page while signed out leads to the sign-in page and
+back to that page afterwards; when the session expires (60 minutes by default) or is rejected,
+the dashboard returns to sign-in with a message. The sidebar shows the user's name and role and
+the sign-out button. A `VIEWER` sees everything but cannot run analyses (the button is replaced by
+a note, and analysis-service refuses the request anyway); an `ADMIN` can.
+
 | Page | What it shows |
 | --- | --- |
 | **Overview** | Unresolved, total and fatal incidents, services affected, errors received in the last 24 h; new incidents per day, unresolved incidents by service, errors by service; recent incident activity and latest analyses. Refreshes every 30 s |
@@ -283,10 +317,11 @@ service shows a clear message with a Retry button in the sections that need it w
 the page keeps working. Confidence is always shown as `LOW`/`MEDIUM`/`HIGH`, never as a
 percentage.
 
-**Live and demo mode.** The normal build (Docker, `npm run dev`) only uses the real APIs and shows
-"Live" on every page. The demo build (`npm run build:demo`) shows bundled synthetic data captured
+**Live and demo mode.** The normal build (Docker, `npm run dev`) only uses the real APIs, requires
+signing in and shows "Live" on every page. The demo build (`npm run build:demo`) shows bundled synthetic data captured
 from a local run of the platform, marks every page "Demo data" with a banner, and makes no API
-requests; it cannot ingest or analyze anything. See
+requests; it cannot ingest or analyze anything. It needs no sign-in: a synthetic "Demo visitor"
+session is built in, without any credentials. See
 [frontend/src/demo/README.md](frontend/src/demo/README.md).
 
 ### Screenshots
@@ -305,11 +340,16 @@ Taken from the running Docker stack with synthetic data (see [screenshots/](scre
 | --- | --- |
 | ![Service Health](screenshots/service-health.png) | ![Overview on a phone](screenshots/overview-mobile.png) |
 
+| Sign-in | Signed in as a viewer |
+| --- | --- |
+| ![Sign-in page](screenshots/login.png) | ![Root Cause Analysis for a viewer, without the run button](screenshots/root-cause-analysis-viewer.png) |
+
 ## Configuration
 
 All Docker Compose settings are read from `.env` (not committed). See
 [docs/configuration.md](docs/configuration.md) for every variable and per-service settings.
-No credentials are stored in source files.
+No credentials are stored in source files; Compose refuses to start until the required secrets
+are set, and each service receives only the secrets it needs.
 
 ## Documentation
 
@@ -320,6 +360,7 @@ No credentials are stored in source files.
 - [docs/events.md](docs/events.md) — Kafka topics, `ErrorEventCreated` contract, outbox, correlation, idempotency, retries and dead-letter topic
 - [docs/database.md](docs/database.md) — data model, constraints, indexes and migrations
 - [docs/configuration.md](docs/configuration.md) — environment variables and service settings
+- [docs/security.md](docs/security.md) — authentication, roles, tokens, CSRF, service-to-service authentication, rate limits, headers and limitations
 
 ## Roadmap
 
@@ -329,7 +370,9 @@ No credentials are stored in source files.
 | 2 | Backend services and data model: ingestion API, fingerprinting, incident API, PostgreSQL schema, validation, structured logging | Done |
 | 3 | Event streaming and correlation: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic | Done |
 | 4 | Root cause analysis: rule-based analysis service with recurring patterns, related incidents and ranked potential causes with evidence | Done |
-| 5 | Dashboard integration: all pages on the real APIs, incidents and incident detail, analysis with evidence, demo mode | **Current** |
-| 6 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |
+| 5 | Dashboard integration: all pages on the real APIs, incidents and incident detail, analysis with evidence, demo mode | Done |
+| 6 | Authentication and security hardening: sign-in, roles, protected APIs, service credentials, CSRF, rate limits, security headers | **Current** |
+| 7 | Monitoring and operations polish | Planned |
+| 8 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |
 
 Scope of later phases may be refined as the project progresses.

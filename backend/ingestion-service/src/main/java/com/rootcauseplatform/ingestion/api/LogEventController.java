@@ -1,10 +1,12 @@
 package com.rootcauseplatform.ingestion.api;
 
 import java.net.URI;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,10 +23,13 @@ import com.rootcauseplatform.ingestion.api.EventQueryResponses.EventSummary;
 import com.rootcauseplatform.ingestion.api.EventQueryResponses.PageResponse;
 import com.rootcauseplatform.ingestion.domain.ErrorEvent;
 import com.rootcauseplatform.ingestion.domain.Severity;
+import com.rootcauseplatform.ingestion.security.FixedWindowRateLimiter;
 import com.rootcauseplatform.ingestion.service.EventFilter;
 import com.rootcauseplatform.ingestion.service.EventQueryService;
 import com.rootcauseplatform.ingestion.service.LogIngestionService;
+import com.rootcauseplatform.ingestion.service.RateLimitExceededException;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -38,12 +43,15 @@ public class LogEventController {
     private final LogIngestionService ingestionService;
     private final EventQueryService queryService;
     private final JsonMapper jsonMapper;
+    private final FixedWindowRateLimiter ingestRateLimiter;
 
     public LogEventController(LogIngestionService ingestionService, EventQueryService queryService,
-            JsonMapper jsonMapper) {
+            JsonMapper jsonMapper, @Value("${app.ingestion.rate-limit-per-minute}") int ingestLimitPerMinute,
+            Clock clock) {
         this.ingestionService = ingestionService;
         this.queryService = queryService;
         this.jsonMapper = jsonMapper;
+        this.ingestRateLimiter = new FixedWindowRateLimiter(ingestLimitPerMinute, Duration.ofMinutes(1), clock);
     }
 
     /** Stored events, most recent first, without stack traces and payloads. */
@@ -54,7 +62,7 @@ public class LogEventController {
             @RequestParam(required = false) @Size(max = 50) String environment,
             @RequestParam(required = false) Severity severity,
             @RequestParam(name = "q", required = false) @Size(max = 200) String query,
-            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "0") @Min(0) @Max(10_000) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         EventFilter filter = new EventFilter(application, service, environment, severity, query);
         return PageResponse.from(queryService.list(filter, page, size).map(EventSummary::from));
@@ -67,7 +75,12 @@ public class LogEventController {
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<LogEventCreatedResponse> ingest(@Valid @RequestBody LogEventRequest request) {
+    public ResponseEntity<LogEventCreatedResponse> ingest(@Valid @RequestBody LogEventRequest request,
+            HttpServletRequest httpRequest) {
+        Duration wait = ingestRateLimiter.tryAcquire(httpRequest.getRemoteAddr());
+        if (!wait.isZero()) {
+            throw new RateLimitExceededException("Too many events from this client. Retry later.", wait);
+        }
         ErrorEvent event = ingestionService.ingest(request);
         URI location = URI.create("/api/v1/logs/" + event.getId());
         return ResponseEntity.created(location).body(new LogEventCreatedResponse(

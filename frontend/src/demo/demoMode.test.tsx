@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderRoute } from '../test/renderRoute'
 import { createDemoApi, type DemoDataset } from './demoApi'
+import { createDemoAuthApi, DEMO_SESSION } from './demoAuth'
 import { loadDemoData } from './loadDemoData'
 
 let data: DemoDataset
@@ -36,6 +37,18 @@ describe('demo dataset', () => {
 })
 
 describe('demo mode', () => {
+  it('needs no sign-in: a synthetic demo session without credentials or requests', async () => {
+    const { router } = renderRoute('/login', createDemoApi(data), { session: DEMO_SESSION, authApi: createDemoAuthApi() })
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Operational Overview' })).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/')
+    const card = screen.getByText('Demo visitor').closest('.user-card') as HTMLElement
+    expect(within(card).getByText('Demo session')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    expect(DEMO_SESSION.expiresAt).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('labels every page as demo data and makes no network requests', async () => {
     const user = userEvent.setup()
     renderRoute('/', createDemoApi(data))

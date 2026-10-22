@@ -34,7 +34,7 @@ class StructuredLoggingTests {
 
     @Test
     void writesIngestionLogsAsValidEcsJson(CapturedOutput output) {
-        ApiClient.Response response = new ApiClient(port).postJson("/api/v1/logs", Map.of(
+        ApiClient.Response response = TestAuth.client(port).postJson("/api/v1/logs", Map.of(
                 "application", "logging-test",
                 "service", "payment-service",
                 "environment", "test",

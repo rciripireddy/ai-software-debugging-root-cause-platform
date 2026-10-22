@@ -40,7 +40,9 @@ keys between the `ingestion` and `incident` schemas; reading those tables direct
 the coupling back. The cost is more HTTP calls per analysis (about 1 + 20 for the incident and,
 for a pool of N incidents, 1 + 2N more, run up to 8 at a time). That is acceptable for
 on-request analysis of one incident; a batch or search endpoint would be needed before analyzing
-many incidents at once.
+many incidents at once. Since Phase 6 these calls carry the internal service token
+(`X-Service-Token`), not the credentials of the user who requested the analysis (see
+[security.md](security.md#service-to-service-authentication)).
 
 ### Why on request, without Kafka
 
@@ -323,6 +325,10 @@ python -m evaluation            # offline: engine only, no services needed
 python -m evaluation --live     # through the running stack: ingestion API -> Kafka ->
                                 # incident-service -> analysis API (stores the analyses)
 ```
+
+Live mode needs `INGESTION_API_KEY` and an `ADMIN` account (`RCP_USERNAME`/`RCP_PASSWORD`, or the
+bootstrap admin from `.env` for local development); see [security.md](security.md). It waits and
+retries when the analysis rate limit answers `429`.
 
 **Results** (2026-10-22, analysis version 1.0.0; offline and live runs gave identical results):
 

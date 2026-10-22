@@ -7,22 +7,50 @@
 Live mode sends the scenario events under a new application name, waits until incident-service
 has correlated them, analyzes every resulting incident through the analysis API (which stores
 the results) and compares the stored primary categories with the labels.
+
+Live mode needs INGESTION_API_KEY and an ADMIN account (RCP_USERNAME / RCP_PASSWORD), from the
+environment or, for local development, from the repository's .env file (the bootstrap admin).
 """
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
+from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Any
 
 from evaluation.dataset import INCIDENT_SEVERITIES, load_labels, load_scenarios
 from evaluation.metrics import Prediction, evaluate, format_report
 
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
-def _request(method: str, url: str, body: dict[str, Any] | None = None) -> Any:
+
+def _env_file_values() -> dict[str, str]:
+    if not ENV_FILE.is_file():
+        return {}
+    values = {}
+    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
+def _credential(values: dict[str, str], name: str, file_name: str | None = None) -> str:
+    value = os.environ.get(name) or values.get(file_name or name)
+    if not value:
+        raise SystemExit(f"Set {name} for live mode (see .env.example).")
+    return value
+
+
+def _request(
+    method: str, url: str, headers: dict[str, str], body: dict[str, Any] | None = None
+) -> Any:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     request = urllib.request.Request(
         url,
@@ -32,13 +60,43 @@ def _request(method: str, url: str, body: dict[str, Any] | None = None) -> Any:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "X-Correlation-Id": "analysis-evaluation",
+            **headers,
         },
     )
+    for _attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # Manual analyses are rate limited per user; wait as long as the service asks.
+            if exc.code != 429:
+                raise
+            time.sleep(int(exc.headers.get("Retry-After", "5")))
+    raise SystemExit(f"Still rate limited after several attempts: {method} {url}")
+
+
+def _sign_in(incident_url: str, username: str, password: str) -> dict[str, str]:
+    request = urllib.request.Request(
+        f"{incident_url}/api/v1/auth/login",
+        data=json.dumps({"username": username, "password": password}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+        cookies: SimpleCookie = SimpleCookie()
+        for header in response.headers.get_all("Set-Cookie") or []:
+            cookies.load(header)
+    return {"Authorization": f"Bearer {cookies['rcp_session'].value}"}
 
 
 def run_live(args: argparse.Namespace) -> dict[str, Prediction]:
+    values = _env_file_values()
+    producer = {"X-Api-Key": _credential(values, "INGESTION_API_KEY")}
+    user = _sign_in(
+        args.incident_url,
+        _credential(values, "RCP_USERNAME", "AUTH_BOOTSTRAP_ADMIN_USERNAME"),
+        _credential(values, "RCP_PASSWORD", "AUTH_BOOTSTRAP_ADMIN_PASSWORD"),
+    )
     application = args.application or f"analysis-eval-{uuid.uuid4().hex[:8]}"
     scenarios = load_scenarios()
     event_scenario: dict[str, str] = {}
@@ -46,7 +104,10 @@ def run_live(args: argparse.Namespace) -> dict[str, Prediction]:
     for scenario, events in scenarios.items():
         for event in events:
             created = _request(
-                "POST", f"{args.ingestion_url}/api/v1/logs", {**event, "application": application}
+                "POST",
+                f"{args.ingestion_url}/api/v1/logs",
+                producer,
+                {**event, "application": application},
             )
             if event["severity"] in INCIDENT_SEVERITIES:
                 event_scenario[created["id"]] = scenario
@@ -56,12 +117,12 @@ def run_live(args: argparse.Namespace) -> dict[str, Prediction]:
     deadline = time.monotonic() + args.timeout
     while True:
         page = _request(
-            "GET", f"{args.incident_url}/api/v1/incidents?application={application}&size=100"
+            "GET", f"{args.incident_url}/api/v1/incidents?application={application}&size=100", user
         )
         assigned: set[str] = set()
         incident_scenario.clear()
         for item in page["items"]:
-            detail = _request("GET", f"{args.incident_url}/api/v1/incidents/{item['id']}")
+            detail = _request("GET", f"{args.incident_url}/api/v1/incidents/{item['id']}", user)
             scenarios_seen = {event_scenario.get(e["id"]) for e in detail["recentEvents"]} - {None}
             if len(scenarios_seen) != 1:
                 raise SystemExit(f"Incident {item['id']} mixes scenarios {sorted(scenarios_seen)}")
@@ -80,7 +141,9 @@ def run_live(args: argparse.Namespace) -> dict[str, Prediction]:
 
     predictions: dict[str, Prediction] = {}
     for incident_id, scenario in incident_scenario.items():
-        analysis = _request("POST", f"{args.analysis_url}/api/v1/analysis/incidents/{incident_id}")
+        analysis = _request(
+            "POST", f"{args.analysis_url}/api/v1/analysis/incidents/{incident_id}", user
+        )
         primary = analysis["primaryCandidate"]
         predictions[scenario] = Prediction(
             category=primary["category"],

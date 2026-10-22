@@ -39,13 +39,19 @@ async def _add_correlation_id(request: httpx.Request) -> None:
         request.headers["X-Correlation-Id"] = value
 
 
+SERVICE_TOKEN_HEADER = "X-Service-Token"
+
+
 def create_http_client(
-    timeout_seconds: float, transport: httpx.AsyncBaseTransport | None = None
+    timeout_seconds: float,
+    service_token: str,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> httpx.AsyncClient:
+    """Calls are authenticated with the internal service token, never with user credentials."""
     return httpx.AsyncClient(
         timeout=timeout_seconds,
         transport=transport,
-        headers={"Accept": "application/json"},
+        headers={"Accept": "application/json", SERVICE_TOKEN_HEADER: service_token},
         event_hooks={"request": [_add_correlation_id]},
     )
 

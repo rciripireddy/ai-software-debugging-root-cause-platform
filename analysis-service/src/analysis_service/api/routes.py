@@ -1,12 +1,14 @@
 """Analysis API (`/api/v1/analysis`) and health endpoints."""
 
+import math
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Path, Query, Request, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from analysis_service import __version__
+from analysis_service.api.security import Caller, RateLimited, authenticate, require_admin
 from analysis_service.logging_config import SERVICE_NAME
 from analysis_service.models.analysis import (
     AnalysisHistory,
@@ -16,11 +18,15 @@ from analysis_service.models.analysis import (
 )
 from analysis_service.services.analysis_service import AnalysisService
 
-router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
+# Every analysis endpoint needs a signed-in user; running an analysis needs the ADMIN role.
+router = APIRouter(
+    prefix="/api/v1/analysis", tags=["analysis"], dependencies=[Depends(authenticate)]
+)
 health_router = APIRouter(tags=["health"])
 
 _ERRORS = {
     400: {"description": "Invalid incident ID or query parameter"},
+    401: {"description": "Not signed in, or the access token is invalid or expired"},
     404: {"description": "Incident (or analysis) not found"},
     503: {"description": "incident-service, ingestion-service or the database is unavailable"},
 }
@@ -37,7 +43,7 @@ IncidentId = Annotated[UUID, Path(alias="incidentId", description="Incident ID (
 @router.get(
     "/incidents",
     response_model=LatestAnalyses,
-    responses={400: _ERRORS[400], 503: _ERRORS[503]},
+    responses={400: _ERRORS[400], 401: _ERRORS[401], 503: _ERRORS[503]},
     summary="Latest analysis per incident (summary only), most recent first",
 )
 async def latest_analyses(
@@ -59,12 +65,24 @@ async def latest_analyses(
     "/incidents/{incidentId}",
     status_code=201,
     response_model=IncidentAnalysis,
-    responses=_ERRORS,
-    summary="Analyze an incident and store the result as a new revision",
+    responses={
+        **_ERRORS,
+        403: {"description": "The user is not an ADMIN, or the CSRF token is missing"},
+        429: {"description": "Too many analyses requested by this user; see Retry-After"},
+    },
+    summary="Analyze an incident and store the result as a new revision (ADMIN)",
 )
 async def analyze_incident(
-    incident_id: IncidentId, request: Request, response: Response
+    incident_id: IncidentId,
+    request: Request,
+    response: Response,
+    caller: Annotated[Caller, Depends(require_admin)],
 ) -> IncidentAnalysis:
+    wait = request.app.state.analysis_rate_limiter.try_acquire(caller.user_id)
+    if wait > 0:
+        raise RateLimited(
+            math.ceil(wait), "Too many analyses requested. Wait a moment and try again."
+        )
     analysis = await _service(request).analyze(incident_id)
     response.headers["Location"] = f"/api/v1/analysis/incidents/{incident_id}"
     return analysis

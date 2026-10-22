@@ -1,6 +1,9 @@
 spring:
   application:
     name: incident-service
+  autoconfigure:
+    # Requests are authenticated by the platform's own filter; no generated default user.
+    exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:rootcause}
     username: ${DB_USERNAME:rootcause}
@@ -52,9 +55,40 @@ app:
   correlation:
     # Events below this severity are recorded as processed but do not create incidents.
     minimum-severity: ${CORRELATION_MINIMUM_SEVERITY:ERROR}
+  # Authentication (see docs/security.md). incident-service owns the user accounts and issues
+  # the access tokens; the secrets have no defaults and are checked at startup.
+  auth:
+    jwt-secret: ${AUTH_JWT_SECRET:}
+    issuer: root-cause-platform
+    audience: root-cause-platform-api
+    token-ttl: ${AUTH_TOKEN_TTL:60m}
+    cookie-name: rcp_session
+    # Must be true when the dashboard is served over HTTPS.
+    cookie-secure: ${AUTH_COOKIE_SECURE:false}
+    service-token: ${INTERNAL_SERVICE_TOKEN:}
+    login-limit:
+      max-failures-per-user: ${AUTH_LOGIN_MAX_FAILURES_PER_USER:5}
+      max-failures-per-client: ${AUTH_LOGIN_MAX_FAILURES_PER_CLIENT:20}
+      window: ${AUTH_LOGIN_FAILURE_WINDOW:15m}
+    # Accounts created at startup if they do not exist yet (local development).
+    bootstrap:
+      admin:
+        username: ${AUTH_BOOTSTRAP_ADMIN_USERNAME:}
+        password: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:}
+        display-name: ${AUTH_BOOTSTRAP_ADMIN_DISPLAY_NAME:Platform Admin}
+      viewer:
+        username: ${AUTH_BOOTSTRAP_VIEWER_USERNAME:}
+        password: ${AUTH_BOOTSTRAP_VIEWER_PASSWORD:}
+        display-name: ${AUTH_BOOTSTRAP_VIEWER_DISPLAY_NAME:Dashboard Viewer}
+  http:
+    # Larger request bodies are rejected with 413 before they are read.
+    max-request-body: 1MB
 
 server:
   port: ${SERVER_PORT:8082}
+  # Client address and scheme from X-Forwarded-* headers set by the dashboard's nginx proxy
+  # (trusted only from private network addresses).
+  forward-headers-strategy: native
 
 logging:
   pattern:

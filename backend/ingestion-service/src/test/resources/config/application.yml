@@ -1,0 +1,7 @@
+# Test-only settings, loaded in addition to src/main/resources/application.yml. These values
+# exist only for the automated tests and are not used by any deployment.
+app:
+  auth:
+    jwt-secret: test-only-jwt-secret-for-automated-tests-0001
+    service-token: test-only-internal-service-token-000000001
+    ingestion-api-key: test-only-ingestion-api-key-0000000000001

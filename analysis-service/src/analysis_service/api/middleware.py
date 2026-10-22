@@ -1,4 +1,4 @@
-"""Correlation ID handling and one log line per API request."""
+"""Correlation ID handling, one log line per API request, and security response headers."""
 
 import logging
 import re
@@ -53,3 +53,28 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             return response
         finally:
             correlation_id.reset(token)
+
+
+# The interactive API docs load Swagger UI / ReDoc from a CDN, so they keep the default policy.
+_DOCS_PATHS = ("/docs", "/redoc")
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Adds the same security headers as the Spring Boot services. HSTS is left to the HTTPS
+    proxy in front of the platform (see docs/security.md)."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        response.headers.update(_SECURITY_HEADERS)
+        if not request.url.path.startswith(_DOCS_PATHS):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; frame-ancestors 'none'"
+            )
+            response.headers["Cache-Control"] = "no-store"
+        return response

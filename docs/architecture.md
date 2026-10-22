@@ -6,13 +6,13 @@ This document describes the target architecture and marks which parts exist toda
 
 ```mermaid
 flowchart LR
-    apps["Application / error producer"] -->|"POST /api/v1/logs"| ingestion
+    apps["Application / error producer"] -->|"POST /api/v1/logs<br/>(X-Api-Key)"| ingestion
     subgraph platform["Root Cause Platform"]
         ingestion["ingestion-service<br/>Ingestion API + outbox publisher"]
         ingestdb[("PostgreSQL<br/>ingestion schema<br/>error_events + outbox_events")]
         kafka[("Kafka<br/>error-events.v1")]
         dlt[("Kafka<br/>error-events.v1.dlt")]
-        incident["incident-service<br/>Kafka consumer + incident API"]
+        incident["incident-service<br/>Kafka consumer + incident API<br/>+ accounts and sign-in"]
         incidentdb[("PostgreSQL<br/>incident schema<br/>incidents, incident_events,<br/>processed_events")]
         analysis["analysis-service<br/>Python · FastAPI<br/>rule-based analysis"]
         analysisdb[("PostgreSQL<br/>analysis schema<br/>incident_analyses")]
@@ -23,24 +23,24 @@ flowchart LR
     kafka -->|"3. consume"| incident
     incident -->|"4. correlate, idempotently"| incidentdb
     incident -.->|"failed messages"| dlt
-    analysis -->|"on request: read incidents (REST)"| incident
-    analysis -->|"read stack traces (REST)"| ingestion
+    analysis -->|"on request: read incidents (REST,<br/>service token)"| incident
+    analysis -->|"read stack traces (REST,<br/>service token)"| ingestion
     analysis -->|"store revisions"| analysisdb
-    ui -->|"/api/*"| ingestion
-    ui -->|"/api/*"| incident
-    ui -->|"/api/*"| analysis
+    ui -->|"/api/* (session cookie)"| ingestion
+    ui -->|"/api/* (session cookie)"| incident
+    ui -->|"/api/* (session cookie)"| analysis
 ```
 
 All three schemas live in the same PostgreSQL database (see [database.md](database.md#design-notes)).
 Event flow, contract and guarantees are described in [events.md](events.md).
 
-| Component | Responsibility (target) | Implemented so far (Phase 5) |
+| Component | Responsibility (target) | Implemented so far (Phase 6) |
 | --- | --- | --- |
 | `ingestion-service` | Accept, validate and persist log events; publish them to Kafka | REST API to store and read events, application registration, error fingerprinting, transactional outbox and Kafka publisher, `ingestion` schema migrations |
-| `incident-service` | Group errors into incidents automatically, detect recurring failures | Kafka consumer that correlates events into incidents (idempotent, with retries and a dead-letter topic), REST API to list/filter and retrieve incidents, deprecated manual creation, `incident` schema migrations |
+| `incident-service` | Group errors into incidents automatically, detect recurring failures | Kafka consumer that correlates events into incidents (idempotent, with retries and a dead-letter topic), REST API to list/filter and retrieve incidents, deprecated manual creation, `incident` schema migrations; user accounts (`auth` schema), sign-in and access tokens |
 | `analysis-service` | Analyze incidents and rank likely root causes with supporting evidence | Rule-based analysis API: normalization, Java/Python stack-trace parsing, recurrence and trace-linked errors, related incidents, ranked potential causes with evidence and confidence bands; stores revisions in the `analysis` schema. See [analysis.md](analysis.md) |
-| `frontend` | Dashboard for overview, error monitoring, root cause analysis and service health | Six pages on the real APIs: Overview (figures and charts), Error Monitoring, Incidents, incident detail, Root Cause Analysis (run and inspect analyses), Service Health; a demo mode with bundled synthetic data. See [Dashboard](#dashboard) |
-| PostgreSQL | Durable storage, one schema per service | Seven tables across the `ingestion`, `incident` and `analysis` schemas, no foreign keys between them |
+| `frontend` | Dashboard for overview, error monitoring, root cause analysis and service health | Six pages on the real APIs: Overview (figures and charts), Error Monitoring, Incidents, incident detail, Root Cause Analysis (run and inspect analyses), Service Health; a demo mode with bundled synthetic data; sign-in page, session handling and role-based controls. See [Dashboard](#dashboard) |
+| PostgreSQL | Durable storage, one schema per service | Eight tables across the `ingestion`, `incident`, `auth` and `analysis` schemas, no foreign keys between them |
 | Kafka | Event stream between ingestion and incident processing | Single-node KRaft broker with `error-events.v1` and its dead-letter topic, 3 partitions each |
 
 Recurring failures are detected deterministically: repeated occurrences of the same fingerprint
@@ -49,6 +49,23 @@ an incident on request: it reads the incident and its events through the inciden
 APIs (never their tables), applies documented rules and scores, and stores the result as a new
 revision. The analysis is deterministic and does not use machine learning or external AI
 services; its suggestions are potential causes with evidence, not confirmed root causes.
+
+## Authentication
+
+Every service authenticates every request itself; nginx only forwards. incident-service owns the
+accounts and issues signed access tokens (JWT, HS256), which the dashboard receives in an
+HttpOnly, SameSite=Strict cookie and API clients send as `Authorization: Bearer`. All three
+services verify the token with the shared key and check the role (`VIEWER` reads, `ADMIN` can also
+run analyses). Monitored applications submit events with an ingestion API key, and
+analysis-service calls the other two services with an internal service token, never with the
+user's credentials. Kafka processing involves no users. Details, including CSRF, rate limits,
+headers and limitations: [security.md](security.md).
+
+| Package | Contents |
+| --- | --- |
+| `security` (both Spring services) | `SecurityConfiguration` (stateless filter chain, access rules, headers), `RequestAuthenticationFilter` (service token, API key, bearer token or cookie; CSRF check), `TokenVerifier`, `SecurityProblems` (401/403 problem details), `FixedWindowRateLimiter`, `RequestBodyLimitFilter` |
+| `auth` (incident-service) | `UserAccount`, `AuthService` (sign-in, password changes), `TokenService`, `LoginAttemptLimiter`, `InitialAccounts`, `AuthController` |
+| `api/security.py` (analysis-service) | `TokenVerifier`, the `authenticate`/`require_admin` dependencies, CSRF check, rate limiter |
 
 ## Service internals
 
@@ -112,6 +129,12 @@ analysis-service (Python, FastAPI) is organized the same way:
 ## Dashboard
 
 The React dashboard (`frontend/`) reads the three services through the proxy described below.
+Every page is behind sign-in (`src/auth/`): `AuthProvider` checks the session cookie with
+`GET /api/v1/auth/me` after a load, `RequireAuth` sends signed-out visitors to `/login` and back
+afterwards, and the HTTP client adds the CSRF token to state-changing requests and ends the
+session when any service answers `401`. The token itself is never visible to the dashboard's
+code.
+
 Pages depend on one `DashboardApi` interface with two implementations:
 
 - **Live** (`src/api/httpApi.ts`): typed calls to the REST APIs. Every response is shape-checked;
@@ -145,13 +168,16 @@ matching backend with the prefix removed:
 
 In Docker this is done by nginx (`frontend/nginx.conf`); during `npm run dev` by the Vite dev
 server proxy (`frontend/vite.config.ts`). This avoids CORS configuration in the services and keeps
-the dashboard deployable as static files.
+the dashboard deployable as static files. Because the dashboard and the APIs share one origin,
+the session cookie reaches all three services. nginx also sets the dashboard's security headers,
+limits request bodies to 1 MB and passes the client address in `X-Forwarded-For` for the
+services' rate limits and logs.
 
 ## Health checks
 
 | Component | Endpoint / command | Used by |
 | --- | --- | --- |
-| ingestion-service | `GET /actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (readiness includes the database connection) | Compose health check (readiness), dashboard |
+| ingestion-service | `GET /actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (readiness includes the database connection); public, no credentials | Compose health check (readiness), dashboard |
 | incident-service | same as above on port 8082 | Compose health check (readiness), dashboard |
 | analysis-service | `GET /health` (liveness), `GET /health/readiness` (database connection) | Compose health check (readiness), dashboard (liveness) |
 | frontend | `GET /` | Compose health check |

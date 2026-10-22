@@ -30,16 +30,23 @@ python sample-data/send_sample_logs.py --application demo-shop-trial
 python sample-data/send_sample_logs.py --url http://localhost:3000/api/ingestion --no-wait
 ```
 
+The script needs the ingestion API key and an account (see
+[docs/security.md](../docs/security.md)). It reads `INGESTION_API_KEY`, and
+`RCP_USERNAME`/`RCP_PASSWORD` for signing in, from environment variables; for local development
+it falls back to `.env` and the bootstrap admin (`--env-file` points elsewhere). It never prints
+them. Without an account it only sends the events. `--analyze` needs an `ADMIN` account.
+
 The script sends each event to the ingestion API and prints its ID and fingerprint. It then waits
 until incident-service has correlated the `ERROR` events through Kafka (up to 30 seconds) and
 prints the resulting incidents. `--application` sends the events under another application name,
 which gives a fresh set of incidents; running it again with the same name adds occurrences to the
 existing open incidents. It uses only the Python standard library.
 
-Analyze one of the printed incidents:
+Analyze one of the printed incidents (with an `ADMIN` token, see
+[docs/api.md](../docs/api.md#signing-in-with-curl)):
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/analysis/incidents/<incident-id>
+curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/analysis/incidents/<incident-id>
 ```
 
 ## `analysis-scenarios/`
@@ -60,6 +67,8 @@ cd analysis-service
 python -m evaluation            # engine only
 python -m evaluation --live     # sends the events through the running stack and analyzes the incidents
 ```
+
+Live mode uses the same credentials as `send_sample_logs.py` (an `ADMIN` account).
 
 Methodology and results: [docs/analysis.md](../docs/analysis.md#evaluation-on-synthetic-scenarios).
 The scenarios were written together with the rules, so the results show that the rules behave as

@@ -25,6 +25,7 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import com.rootcauseplatform.ingestion.logging.CorrelationIdFilter;
+import com.rootcauseplatform.ingestion.service.RateLimitExceededException;
 import com.rootcauseplatform.ingestion.service.ResourceNotFoundException;
 
 import tools.jackson.core.JacksonException;
@@ -41,6 +42,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ResourceNotFoundException.class)
     ResponseEntity<Object> handleNotFound(ResourceNotFoundException ex, WebRequest request) {
         return respond(problem(HttpStatus.NOT_FOUND, "Resource not found", ex.getMessage()), request);
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<Object> handleRateLimited(RateLimitExceededException ex, WebRequest request) {
+        log.atWarn().setMessage("Rate limit exceeded")
+                .addKeyValue("action", "rate_limit.exceeded")
+                .addKeyValue("path", path(request))
+                .addKeyValue("retryAfterSeconds", ex.retryAfterSeconds())
+                .log();
+        ProblemDetail problem = problem(HttpStatus.TOO_MANY_REQUESTS, "Too many requests", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.retryAfterSeconds()))
+                .body(problem);
     }
 
     @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})

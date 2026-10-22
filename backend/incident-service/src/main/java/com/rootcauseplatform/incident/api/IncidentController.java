@@ -54,7 +54,7 @@ public class IncidentController {
             @RequestParam(required = false) @Size(max = 100) String service,
             @RequestParam(required = false) @Size(max = 50) String environment,
             @RequestParam(name = "q", required = false) @Size(max = 200) String query,
-            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "0") @Min(0) @Max(10_000) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         IncidentFilter filter = new IncidentFilter(status, severity, application, service, environment, query);
         return PageResponse.from(incidentService.list(filter, page, size).map(IncidentSummary::from));

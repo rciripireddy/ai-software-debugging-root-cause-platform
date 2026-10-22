@@ -1,6 +1,9 @@
 spring:
   application:
     name: ingestion-service
+  autoconfigure:
+    # Requests are authenticated by the platform's own filter; no generated default user.
+    exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:rootcause}
     username: ${DB_USERNAME:rootcause}
@@ -48,9 +51,27 @@ app:
     max-backoff: 60s
     alert-every-attempts: 10
     retention: 7d
+  # Authentication (see docs/security.md): access tokens issued by incident-service are verified
+  # with the shared key; log producers send the ingestion API key. No defaults for secrets.
+  auth:
+    jwt-secret: ${AUTH_JWT_SECRET:}
+    issuer: root-cause-platform
+    audience: root-cause-platform-api
+    cookie-name: rcp_session
+    service-token: ${INTERNAL_SERVICE_TOKEN:}
+    ingestion-api-key: ${INGESTION_API_KEY:}
+  ingestion:
+    # Accepted events per client address and minute (in memory, per instance).
+    rate-limit-per-minute: ${INGESTION_RATE_LIMIT_PER_MINUTE:600}
+  http:
+    # Larger request bodies are rejected with 413 before they are read.
+    max-request-body: 1MB
 
 server:
   port: ${SERVER_PORT:8081}
+  # Client address and scheme from X-Forwarded-* headers set by the dashboard's nginx proxy
+  # (trusted only from private network addresses).
+  forward-headers-strategy: native
 
 logging:
   pattern:

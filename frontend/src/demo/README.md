@@ -12,7 +12,8 @@ analysis engine; nothing was edited by hand. It contains no event metadata or ra
 real customer or system data.
 
 **What demo mode does not do.** It cannot ingest, correlate or analyze anything. "Run analysis"
-shows the analysis stored in the dataset. Overview figures are computed from the bundled
+shows the analysis stored in the dataset. There is no sign-in: a synthetic "Demo visitor"
+session (`demoAuth.ts`) is built in, without credentials, and makes no requests. Overview figures are computed from the bundled
 incidents and events relative to the capture time (`capturedAt`); service health shows the
 snapshot recorded during the capture. Relative times ("5 days ago") are computed against the
 viewer's clock, so they grow as the dataset ages.
@@ -29,5 +30,7 @@ cd frontend && node scripts/capture-demo-data.mjs --applications demo-store,demo
 
 The first two commands send the synthetic events through the ingestion API and run the analyses;
 use application names that do not exist yet, or the new events are added to the existing
-incidents. The capture script only reads data. Live builds (`npm run build`) do not include this
+incidents. All three use the ingestion key and sign in with `RCP_USERNAME`/`RCP_PASSWORD`, or for
+local development with the bootstrap admin from `.env`. The capture script only reads data; it
+does not store credentials or the session in the dataset. Live builds (`npm run build`) do not include this
 file (see `vite.config.ts`).

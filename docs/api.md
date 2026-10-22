@@ -8,6 +8,56 @@ the default local ports; through the dashboard proxy the same endpoints are avai
 The IDs, timestamps and fingerprints below come from a local run with the demo data in
 [`sample-data/`](../sample-data/).
 
+Since Phase 6 every endpoint except sign-in and health needs credentials; see
+[Authentication](#authentication) and [security.md](security.md).
+
+## Authentication
+
+| Caller | Credential | Header |
+| --- | --- | --- |
+| Signed-in user (dashboard) | Access token in the HttpOnly session cookie `rcp_session`, set by `POST /api/v1/auth/login` | `Cookie` (sent by the browser); state-changing requests also send `X-CSRF-Token` |
+| Signed-in user (API client, script) | The same access token | `Authorization: Bearer <token>` |
+| Monitored application (log producer) | Ingestion API key (`INGESTION_API_KEY`) | `X-Api-Key: <key>` |
+| analysis-service calling the other services | Internal service token (`INTERNAL_SERVICE_TOKEN`) | `X-Service-Token: <token>` |
+
+Access tokens are JWTs signed by incident-service (HS256) and accepted by all three services
+until they expire (60 minutes by default). Users have the role `VIEWER` (read everything) or
+`ADMIN` (also run analyses and other actions).
+
+| Endpoint | Public | VIEWER | ADMIN | Log producer | Internal service |
+| --- | --- | --- | --- | --- | --- |
+| `POST /api/v1/auth/login`, `POST /api/v1/auth/logout` | yes | | | | |
+| `GET /api/v1/auth/me`, `PUT /api/v1/auth/password` | | yes | yes | | |
+| `POST /api/v1/logs` | | | | yes | |
+| `GET /api/v1/logs/**`, `GET /api/v1/applications` | | yes | yes | | yes |
+| `GET /api/v1/incidents/**` | | yes | yes | | yes |
+| `POST /api/v1/incidents` (deprecated) | | | yes | | |
+| `GET /api/v1/analysis/**` | | yes | yes | | |
+| `POST /api/v1/analysis/incidents/{incidentId}` | | | yes | | |
+| `/actuator/health/**`, `/actuator/info`, `/health`, `/health/readiness` | yes | | | | |
+
+Everything not listed is denied. A missing, malformed, wrongly signed or expired credential gives
+`401` (title `Session expired` for an expired token, otherwise `Authentication required`, with a
+`WWW-Authenticate: Bearer` header); a credential whose role does not allow the request gives
+`403`.
+
+### Signing in with curl
+
+The token is in the `rcp_session` cookie of the sign-in response. Keep it in a cookie file and
+send it as a bearer token (examples below use `$TOKEN`):
+
+```bash
+read -rsp 'Password: ' RCP_PASSWORD; echo
+curl -s -c cookies.txt http://localhost:8082/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\": \"admin\", \"password\": \"$RCP_PASSWORD\"}"
+TOKEN=$(awk '$6 == "rcp_session" {print $7}' cookies.txt)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8082/api/v1/auth/me
+```
+
+Delete `cookies.txt` afterwards. Requests with `Authorization: Bearer` need no CSRF token,
+because browsers never add that header on their own.
+
 ## Common behavior
 
 - Request and response bodies are JSON (`Content-Type: application/json`).
@@ -41,10 +91,15 @@ exception details.
 | Status | When |
 | --- | --- |
 | `400 Bad Request` | Missing or invalid fields (`errors` lists each one), malformed JSON, invalid path or query parameter |
+| `401 Unauthorized` | No valid credential: not signed in, wrong username or password, expired or invalid token, wrong API key or service token |
+| `403 Forbidden` | The role does not allow the request, or a cookie-authenticated change lacks the CSRF token |
 | `404 Not Found` | The requested log event, incident or analysis does not exist |
 | `409 Conflict` | The request conflicts with existing data (see `POST /api/v1/incidents`) |
+| `411 Length Required` | A request body without `Content-Length` (chunked) |
+| `413 Content Too Large` | A request body over 1 MB |
 | `415 Unsupported Media Type` | The request body is not `application/json` |
-| `422 Unprocessable Content` | Valid JSON that refers to data that cannot be used (see `POST /api/v1/incidents`) |
+| `422 Unprocessable Content` | Valid JSON that refers to data that cannot be used (see `POST /api/v1/incidents`), or a refused password change |
+| `429 Too Many Requests` | A rate limit was reached (sign-in failures, events per client, analyses per user); `Retry-After` gives the seconds to wait |
 | `500 Internal Server Error` | Unexpected error; details are only in the service log, under the same correlation ID |
 | `503 Service Unavailable` | The database, or a service the request depends on, is temporarily unreachable; retry later |
 
@@ -53,7 +108,9 @@ exception details.
 ### `POST /api/v1/logs`
 
 Stores one log or error event. The application is registered automatically the first time an
-event arrives for a new combination of `application`, `service` and `environment`.
+event arrives for a new combination of `application`, `service` and `environment`. Needs the
+ingestion API key (`X-Api-Key`); at most `INGESTION_RATE_LIMIT_PER_MINUTE` events (default 600)
+per client address and minute.
 
 | Field | Required | Rules |
 | --- | --- | --- |
@@ -74,6 +131,7 @@ event arrives for a new combination of `application`, `service` and `environment
 ```bash
 curl -i http://localhost:8081/api/v1/logs \
   -H 'Content-Type: application/json' \
+  -H "X-Api-Key: $INGESTION_API_KEY" \
   -d '{
     "application": "demo-shop",
     "service": "payment-service",
@@ -163,11 +221,12 @@ says whether `GET /api/v1/logs/{id}` has one.
 | `environment` | — | Environment (case-insensitive) |
 | `severity` | — | `DEBUG`, `INFO`, `WARN`, `ERROR` or `FATAL` |
 | `q` | — | Text contained in the message or exception type (case-insensitive, up to 200 characters; `%` and `_` match literally) |
-| `page` | `0` | Zero-based page number |
+| `page` | `0` | Zero-based page number, up to 10,000 |
 | `size` | `20` | Page size, 1–100 |
 
 ```bash
-curl 'http://localhost:8081/api/v1/logs?application=demo-store&service=payment-service&severity=ERROR&size=1'
+curl -H "Authorization: Bearer $TOKEN" \
+  'http://localhost:8081/api/v1/logs?application=demo-store&service=payment-service&severity=ERROR&size=1'
 ```
 
 ```json
@@ -235,6 +294,60 @@ messages published by ingestion-service and groups events with the same applicat
 fingerprint into one unresolved incident. Events below `ERROR` severity do not create incidents.
 The rules are described in [events.md](events.md#correlation-rules).
 
+incident-service also owns the user accounts and issues the access tokens.
+
+### `POST /api/v1/auth/login`
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `username` | yes | Up to 100 characters; case-insensitive |
+| `password` | yes | Up to 128 characters |
+
+`200 OK` sets the session cookie and returns the user; the token itself is only in the cookie:
+
+```
+Set-Cookie: rcp_session=<access token>; Path=/; Max-Age=3600; Expires=...; HttpOnly; SameSite=Strict
+```
+
+```json
+{
+  "user": {
+    "id": "6b0e4c56-1a3f-4a3e-9f0e-2a8f0a6d1c11",
+    "username": "admin",
+    "displayName": "Platform Admin",
+    "role": "ADMIN"
+  },
+  "expiresAt": "2026-10-22T21:05:12.418Z",
+  "csrfToken": "Qx8n0v…"
+}
+```
+
+`csrfToken` must be sent as `X-CSRF-Token` with state-changing requests that use the cookie. An
+unknown username, a wrong password and a disabled account all give the same `401`
+(`"title": "Invalid credentials"`, `"detail": "The username or password is incorrect."`). After
+5 failed attempts for a username, or 20 from one client address, within 15 minutes, sign-in is
+refused with `429` and `Retry-After` until the window ends (configurable, see
+[configuration.md](configuration.md#authentication)).
+
+### `GET /api/v1/auth/me`
+
+The signed-in user, `expiresAt` and `csrfToken` (same body as the sign-in response); the
+dashboard calls it after a reload. `401` if the token is missing, invalid or expired, or the
+account has been disabled or deleted since sign-in.
+
+### `POST /api/v1/auth/logout`
+
+`204 No Content`; removes the session cookie (`Max-Age=0`). Public, so it also clears an expired
+cookie; with a valid cookie it needs the CSRF token. Access tokens are not stored on the server,
+so a copied token stays valid until it expires (see [security.md](security.md#limitations)).
+
+### `PUT /api/v1/auth/password`
+
+Changes the signed-in user's password: `{"currentPassword": "...", "newPassword": "..."}`. The
+new password needs 12–72 bytes and must differ from the username and the current password.
+`204` on success; `422` (`"title": "Password not changed"`) for a wrong current password or a
+password that breaks these rules. Existing tokens stay valid until they expire.
+
 ### `GET /api/v1/incidents/{id}`
 
 Returns the incident with its application and up to 50 of its most recent events.
@@ -289,11 +402,11 @@ Lists incidents, most recent activity (`lastSeenAt`) first.
 | `service` | — | Service name (case-insensitive) |
 | `environment` | — | Environment (case-insensitive) |
 | `q` | — | Text contained in the title (case-insensitive, up to 200 characters) |
-| `page` | `0` | Zero-based page number |
+| `page` | `0` | Zero-based page number, up to 10,000 |
 | `size` | `20` | Page size, 1–100 |
 
 ```bash
-curl 'http://localhost:8082/api/v1/incidents?application=demo-shop&status=OPEN&size=10'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8082/api/v1/incidents?application=demo-shop&status=OPEN&size=10'
 ```
 
 ```json
@@ -336,7 +449,7 @@ Aggregate counts for the dashboard overview, computed with SQL aggregates on eac
 | `newIncidentsPerDay` | Incidents per UTC day of their **first occurrence**, for the last `days` days (default `14`, 1–90), including days with 0 |
 
 ```bash
-curl 'http://localhost:8082/api/v1/incidents/stats?days=3'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8082/api/v1/incidents/stats?days=3'
 ```
 
 ```json
@@ -362,6 +475,8 @@ curl 'http://localhost:8082/api/v1/incidents/stats?days=3'
 
 ### `POST /api/v1/incidents` (deprecated)
 
+Requires the `ADMIN` role.
+
 > **Deprecated since Phase 3.** Incidents are now created automatically from Kafka messages.
 > The endpoint still works for existing clients and responds with an RFC 9745
 > `Deprecation: @1792454400` header (2026-10-20). It will be removed in a later phase.
@@ -386,6 +501,7 @@ derived from the events.
 ```bash
 curl -i http://localhost:8082/api/v1/incidents \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "errorEventIds": [
       "01a159ed-2ef9-7e05-9c04-298351ea066b"
@@ -409,7 +525,9 @@ Rule-based analysis of an incident: recurring patterns, related incidents and ra
 root causes**, each with evidence, a confidence band (`LOW`, `MEDIUM`, `HIGH`) and limitations.
 How the analysis works, including every rule and score: [analysis.md](analysis.md). The service
 reads incidents and events through the incident and ingestion APIs, so both must be reachable
-when an analysis is requested.
+when an analysis is requested; those calls are authenticated with the internal service token,
+not with the user's credentials. Reading needs a signed-in user (`VIEWER` or `ADMIN`); this API
+accepts no service token.
 
 The examples come from the synthetic scenarios in
 [`sample-data/analysis-scenarios/`](../sample-data/analysis-scenarios/), sent through the
@@ -429,7 +547,7 @@ request.
 | `limit` | `20` | Maximum number of items, 1–100 |
 
 ```bash
-curl 'http://localhost:8000/api/v1/analysis/incidents?limit=1'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8000/api/v1/analysis/incidents?limit=1'
 ```
 
 ```json
@@ -456,10 +574,13 @@ curl 'http://localhost:8000/api/v1/analysis/incidents?limit=1'
 ### `POST /api/v1/analysis/incidents/{incidentId}`
 
 Analyzes the incident now and stores the result as a new **revision** (earlier revisions are
-kept). No request body.
+kept). No request body. Requires the `ADMIN` role (`403` for `VIEWER`); with the session cookie
+also the CSRF token. At most `ANALYSIS_RATE_LIMIT_PER_MINUTE` analyses (default 30) per user and
+minute, then `429` with `Retry-After`.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/analysis/incidents/01a16414-f904-7b87-a395-a8102fd956c5
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/v1/analysis/incidents/01a16414-f904-7b87-a395-a8102fd956c5
 ```
 
 `201 Created`, with `Location: /api/v1/analysis/incidents/{incidentId}`:

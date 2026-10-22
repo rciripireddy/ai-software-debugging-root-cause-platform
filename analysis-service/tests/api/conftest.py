@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 
 import pytest
+from auth_tokens import JWT_SECRET, SERVICE_TOKEN, bearer, make_token
 from fake_backend import INCIDENT_URL, INGESTION_URL, FakeBackend
 from fastapi.testclient import TestClient
 from testcontainers.community.postgres import PostgresContainer
@@ -25,6 +26,10 @@ def settings(postgres: PostgresContainer) -> Settings:
         db_password=postgres.password,
         incident_service_url=INCIDENT_URL,
         ingestion_service_url=INGESTION_URL,
+        auth_jwt_secret=JWT_SECRET,
+        internal_service_token=SERVICE_TOKEN,
+        # Rate limiting has its own test.
+        analysis_rate_limit_per_minute=1000,
     )
 
 
@@ -35,5 +40,14 @@ def backend() -> FakeBackend:
 
 @pytest.fixture
 def client(settings: Settings, backend: FakeBackend) -> Iterator[TestClient]:
+    """A client signed in as an ADMIN (bearer token)."""
+    app = create_app(settings, backend.transport())
+    with TestClient(app, headers=bearer(make_token("ADMIN"))) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def anonymous(settings: Settings, backend: FakeBackend) -> Iterator[TestClient]:
+    """A client without credentials."""
     with TestClient(create_app(settings, backend.transport())) as test_client:
         yield test_client

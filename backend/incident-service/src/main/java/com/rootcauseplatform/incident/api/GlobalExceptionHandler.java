@@ -24,9 +24,12 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import com.rootcauseplatform.incident.auth.AuthenticationFailedException;
+import com.rootcauseplatform.incident.auth.PasswordChangeException;
 import com.rootcauseplatform.incident.logging.CorrelationIdFilter;
 import com.rootcauseplatform.incident.service.ConflictException;
 import com.rootcauseplatform.incident.service.InvalidIncidentException;
+import com.rootcauseplatform.incident.service.RateLimitExceededException;
 import com.rootcauseplatform.incident.service.ResourceNotFoundException;
 
 import tools.jackson.core.JacksonException;
@@ -53,6 +56,29 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InvalidIncidentException.class)
     ResponseEntity<Object> handleInvalidIncident(InvalidIncidentException ex, WebRequest request) {
         return respond(problem(HttpStatus.UNPROCESSABLE_CONTENT, "Invalid incident", ex.getMessage()), request);
+    }
+
+    @ExceptionHandler(AuthenticationFailedException.class)
+    ResponseEntity<Object> handleAuthenticationFailed(AuthenticationFailedException ex, WebRequest request) {
+        return respond(problem(HttpStatus.UNAUTHORIZED, ex.getTitle(), ex.getMessage()), request);
+    }
+
+    @ExceptionHandler(PasswordChangeException.class)
+    ResponseEntity<Object> handlePasswordChange(PasswordChangeException ex, WebRequest request) {
+        return respond(problem(HttpStatus.UNPROCESSABLE_CONTENT, "Password not changed", ex.getMessage()), request);
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<Object> handleRateLimited(RateLimitExceededException ex, WebRequest request) {
+        log.atWarn().setMessage("Rate limit exceeded")
+                .addKeyValue("action", "rate_limit.exceeded")
+                .addKeyValue("path", path(request))
+                .addKeyValue("retryAfterSeconds", ex.retryAfterSeconds())
+                .log();
+        ProblemDetail problem = problem(HttpStatus.TOO_MANY_REQUESTS, "Too many requests", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.retryAfterSeconds()))
+                .body(problem);
     }
 
     @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from psycopg_pool import PoolTimeout
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from analysis_service.api.security import AuthenticationRequired, PermissionDenied, RateLimited
 from analysis_service.clients.backend import BackendUnavailableError
 from analysis_service.logging_config import correlation_id
 from analysis_service.services.analysis_service import AnalysisNotFoundError
@@ -76,6 +77,70 @@ def register_problem_handlers(app: FastAPI) -> None:
         response = problem_response(request, exc.status_code, title, detail)
         if exc.headers:
             response.headers.update(exc.headers)
+        return response
+
+    @app.exception_handler(AuthenticationRequired)
+    async def authentication_required(
+        request: Request, exc: AuthenticationRequired
+    ) -> JSONResponse:
+        log.info(
+            "Request not authenticated",
+            extra={
+                "action": "auth.unauthenticated",
+                "reason": exc.reason,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        if exc.reason == "expired":
+            response = problem_response(
+                request, 401, "Session expired", "Your session has expired. Sign in again."
+            )
+        else:
+            response = problem_response(
+                request,
+                401,
+                "Authentication required",
+                "Sign in or provide valid credentials to access this resource.",
+            )
+        response.headers["WWW-Authenticate"] = (
+            "Bearer" if exc.reason == "missing_credentials" else 'Bearer error="invalid_token"'
+        )
+        return response
+
+    @app.exception_handler(PermissionDenied)
+    async def permission_denied(request: Request, exc: PermissionDenied) -> JSONResponse:
+        log.warning(
+            "Access denied",
+            extra={
+                "action": "auth.forbidden" if exc.reason == "role" else "auth.csrf_rejected",
+                "principalId": exc.caller.user_id,
+                "role": exc.caller.role,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        if exc.reason == "csrf":
+            return problem_response(
+                request,
+                403,
+                "CSRF token missing or invalid",
+                "Reload the dashboard and try again.",
+            )
+        return problem_response(request, 403, "Forbidden", "Your role does not allow this action.")
+
+    @app.exception_handler(RateLimited)
+    async def rate_limited(request: Request, exc: RateLimited) -> JSONResponse:
+        log.warning(
+            "Rate limit exceeded",
+            extra={
+                "action": "rate_limit.exceeded",
+                "path": request.url.path,
+                "retryAfterSeconds": exc.retry_after_seconds,
+            },
+        )
+        response = problem_response(request, 429, "Too many requests", exc.detail)
+        response.headers["Retry-After"] = str(exc.retry_after_seconds)
         return response
 
     @app.exception_handler(IncidentNotFoundError)

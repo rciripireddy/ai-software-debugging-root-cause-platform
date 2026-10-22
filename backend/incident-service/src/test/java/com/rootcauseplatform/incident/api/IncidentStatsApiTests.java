@@ -21,6 +21,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.rootcauseplatform.incident.ApiClient;
+import com.rootcauseplatform.incident.TestAuth;
 import com.rootcauseplatform.incident.TestData;
 import com.rootcauseplatform.incident.TestMessages;
 import com.rootcauseplatform.incident.TestcontainersConfiguration;
@@ -57,7 +58,7 @@ class IncidentStatsApiTests {
 
     @BeforeEach
     void setUp() {
-        api = new ApiClient(port);
+        api = TestAuth.client(port);
         data = new TestData(jdbcTemplate);
         applicationName = "stats-app-" + UUID.randomUUID().toString().substring(0, 8);
         applicationId = UUID.randomUUID();

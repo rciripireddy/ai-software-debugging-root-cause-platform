@@ -47,8 +47,11 @@ analysis requests (for example the Docker Compose stack):
 ```bash
 # PowerShell: $env:DB_PASSWORD='...'; $env:DB_PORT='5432'
 export DB_PASSWORD='<POSTGRES_PASSWORD>' DB_PORT='<POSTGRES_PORT>'
+# The service does not start without its auth secrets (same values as in .env):
+export AUTH_JWT_SECRET='<from .env>' INTERNAL_SERVICE_TOKEN='<from .env>'
 python -m analysis_service
 ```
 
-Then open <http://localhost:8000/docs>. If port 8000 is taken by the Compose container, set
+Then open <http://localhost:8000/docs>. The analysis endpoints need a signed-in user (bearer
+token, see [docs/security.md](../docs/security.md)); running an analysis needs the `ADMIN` role. If port 8000 is taken by the Compose container, set
 `SERVER_PORT=8010`.

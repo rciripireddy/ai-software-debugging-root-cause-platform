@@ -12,7 +12,7 @@ import type {
 } from '../types/api'
 import type { DashboardApi } from './dashboardApi'
 import { checkHealth, monitoredServices } from './health'
-import { ApiError, createHttpClient, hasFields, isItems, isPage, withQuery } from './http'
+import { ApiError, createHttpClient, hasFields, isItems, isPage, withQuery, type SessionHooks } from './http'
 
 const isEvent = (item: unknown) => hasFields(item, 'id', 'application', 'timestamp', 'severity', 'message', 'fingerprint')
 const isIncident = (item: unknown) =>
@@ -37,11 +37,21 @@ export interface HttpApiOptions {
   fetchImpl?: typeof fetch
   timeoutMs: number
   base: { ingestion: string; incident: string; analysis: string }
+  /** The signed-in session: CSRF token for analysis runs, and what to do on 401. */
+  session?: SessionHooks
 }
 
-/** The dashboard API backed by the real services, through the dev-server or nginx proxy. */
-export function createHttpApi({ fetchImpl = (...args) => fetch(...args), timeoutMs, base }: HttpApiOptions): DashboardApi {
-  const http = createHttpClient(fetchImpl, timeoutMs)
+/**
+ * The dashboard API backed by the real services, through the dev-server or nginx proxy. Requests
+ * are authenticated by the session cookie that the browser sends to the same origin.
+ */
+export function createHttpApi({
+  fetchImpl = (...args) => fetch(...args),
+  timeoutMs,
+  base,
+  session,
+}: HttpApiOptions): DashboardApi {
+  const http = createHttpClient(fetchImpl, timeoutMs, session)
   const ingestion = (path: string) => `${base.ingestion}${path}`
   const incident = (path: string) => `${base.incident}${path}`
   const analysis = (path: string) => `${base.analysis}${path}`

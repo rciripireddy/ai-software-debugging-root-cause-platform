@@ -89,3 +89,40 @@ describe('withQuery', () => {
     expect(withQuery('/x', {})).toBe('/x')
   })
 })
+
+describe('createHttpClient with a session', () => {
+  const hooks = () => ({ csrfToken: vi.fn(() => 'csrf-1'), onUnauthorized: vi.fn() })
+
+  it('sends the CSRF token with state-changing requests only, and always sends cookies to this origin', async () => {
+    const fetchMock = vi.fn(async () => json({ id: 'a' }))
+    const http = createHttpClient(fetchMock, 1000, hooks())
+
+    await http.request('analysis-service', '/a', anyObject)
+    await http.request('analysis-service', '/b', anyObject, { method: 'POST' })
+
+    const [, get] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    const [, post] = fetchMock.mock.calls[1] as unknown as [string, RequestInit]
+    expect(get.headers).not.toHaveProperty('X-CSRF-Token')
+    expect(post.headers).toMatchObject({ 'X-CSRF-Token': 'csrf-1' })
+    expect(get.credentials).toBe('same-origin')
+  })
+
+  it('reports a 401 to the session, so the dashboard can ask the user to sign in again', async () => {
+    const session = hooks()
+    const http = createHttpClient(vi.fn().mockResolvedValue(json({ title: 'Session expired' }, 401)), 1000, session)
+
+    const error = (await http.request('incident-service', '/x', anyObject).catch((e: unknown) => e)) as ApiError
+
+    expect(session.onUnauthorized).toHaveBeenCalledTimes(1)
+    expect(error).toMatchObject({ kind: 'http', status: 401, title: 'Session expired' })
+  })
+
+  it('does not end the session for a 403', async () => {
+    const session = hooks()
+    const http = createHttpClient(vi.fn().mockResolvedValue(json({ title: 'Forbidden' }, 403)), 1000, session)
+
+    await http.request('analysis-service', '/x', anyObject, { method: 'POST' }).catch(() => undefined)
+
+    expect(session.onUnauthorized).not.toHaveBeenCalled()
+  })
+})

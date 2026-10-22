@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { createFakeApi, unavailable } from '../test/fakeApi'
 import { analysis, analysisSummary, candidate, PAYMENT_INCIDENT_ID } from '../test/fixtures'
+import { ApiError } from '../api/http'
+import { session } from '../test/fakeAuth'
 import { renderRoute } from '../test/renderRoute'
 
 const path = `/root-cause/${PAYMENT_INCIDENT_ID}`
@@ -121,5 +123,37 @@ describe('RootCauseAnalysisPage', () => {
 
     expect(await screen.findByText('Incident service unavailable')).toBeInTheDocument()
     expect(screen.getByRole('article', { name: /Timeout waiting/ })).toBeInTheDocument()
+  })
+
+  it('lets a viewer read the analysis but not run one', async () => {
+    const api = createFakeApi()
+    renderRoute(path, api, { session: session('VIEWER') })
+
+    expect(await screen.findByRole('article', { name: /Timeout waiting/ })).toBeInTheDocument()
+    expect(screen.getByText('Running an analysis requires the Administrator role.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /run analysis/i })).not.toBeInTheDocument()
+    expect(api.analyzeIncident).not.toHaveBeenCalled()
+  })
+
+  it('tells a viewer that an administrator can analyze an incident that has none', async () => {
+    renderRoute(path, createFakeApi({ getLatestAnalysis: vi.fn(async () => null) }), { session: session('VIEWER') })
+
+    expect(await screen.findByText(/An administrator can run an analysis/)).toBeInTheDocument()
+  })
+
+  it('shows the answer of the server if running an analysis is refused', async () => {
+    const user = userEvent.setup()
+    const forbidden = new ApiError({
+      kind: 'http',
+      service: 'analysis-service',
+      status: 403,
+      title: 'Forbidden',
+      detail: 'Your role does not allow this action.',
+    })
+    renderRoute(path, createFakeApi({ analyzeIncident: vi.fn().mockRejectedValue(forbidden) }))
+
+    await user.click(await screen.findByRole('button', { name: 'Re-run analysis' }))
+
+    expect(await screen.findByText('Your role does not allow this action.')).toBeInTheDocument()
   })
 })

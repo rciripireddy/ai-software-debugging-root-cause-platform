@@ -9,8 +9,9 @@ template:
 cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 ```
 
-`.env` is listed in `.gitignore` and must not be committed. `POSTGRES_PASSWORD` has no default:
-Compose refuses to start until it is set.
+`.env` is listed in `.gitignore` and must not be committed. `POSTGRES_PASSWORD`,
+`AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN` and `INGESTION_API_KEY` have no default: Compose
+refuses to start until they are set.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -24,9 +25,45 @@ Compose refuses to start until it is set.
 | `INCIDENT_SERVICE_PORT` | `8082` | Host port for the incident service |
 | `ANALYSIS_SERVICE_PORT` | `8000` | Host port for the analysis service |
 | `FRONTEND_PORT` | `3000` | Host port for the dashboard |
+| `AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN`, `INGESTION_API_KEY` | *(required)* | See [Authentication](#authentication) |
+| `AUTH_BOOTSTRAP_*`, `AUTH_TOKEN_TTL`, `AUTH_COOKIE_SECURE`, rate limits | see below | See [Authentication](#authentication) |
 
 Changing `POSTGRES_*` values after the first start has no effect on the existing database volume.
 Run `docker compose down -v` to recreate it (this deletes local data).
+
+## Authentication
+
+See [security.md](security.md) for how these are used. Secrets have no defaults anywhere; a
+service whose secret is missing or shorter than 32 characters stops at startup with a message
+that names the variable but not the value. Generate secrets with
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+| Variable | Default | Used by | Description |
+| --- | --- | --- | --- |
+| `AUTH_JWT_SECRET` | *(required)* | ingestion, incident, analysis | HS256 key that signs (incident-service) and verifies access tokens; at least 32 characters |
+| `INTERNAL_SERVICE_TOKEN` | *(required)* | ingestion, incident, analysis | Internal credential analysis-service sends as `X-Service-Token`; at least 32 characters |
+| `INGESTION_API_KEY` | *(required)* | ingestion | Key that log producers send as `X-Api-Key`; at least 32 characters |
+| `AUTH_BOOTSTRAP_ADMIN_USERNAME`, `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | `admin` (in `.env.example`), *(empty)* | incident | First `ADMIN`, created at startup if missing; no account is created while either is empty. Password: 12–72 bytes |
+| `AUTH_BOOTSTRAP_VIEWER_USERNAME`, `AUTH_BOOTSTRAP_VIEWER_PASSWORD` | *(empty)* | incident | Optional `VIEWER`, created the same way |
+| `AUTH_BOOTSTRAP_ADMIN_DISPLAY_NAME`, `AUTH_BOOTSTRAP_VIEWER_DISPLAY_NAME` | `Platform Admin`, `Dashboard Viewer` | incident | Names shown in the dashboard (service setting; not passed by Compose) |
+| `AUTH_TOKEN_TTL` | `60m` | incident | Lifetime of an access token (and the session cookie) |
+| `AUTH_COOKIE_SECURE` | `false` | incident | Mark the session cookie `Secure`; **set to `true` whenever the dashboard is served over HTTPS** |
+| `AUTH_LOGIN_MAX_FAILURES_PER_USER` | `5` | incident | Failed sign-ins per username within the window before `429` |
+| `AUTH_LOGIN_MAX_FAILURES_PER_CLIENT` | `20` | incident | Failed sign-ins per client address within the window before `429` |
+| `AUTH_LOGIN_FAILURE_WINDOW` | `15m` | incident | Window for both sign-in limits |
+| `INGESTION_RATE_LIMIT_PER_MINUTE` | `600` | ingestion | Accepted events per client address and minute |
+| `ANALYSIS_RATE_LIMIT_PER_MINUTE` | `30` | analysis | Manual analyses per user and minute |
+
+Issuer (`root-cause-platform`), audience (`root-cause-platform-api`) and the cookie name
+(`rcp_session`) are fixed in each service's configuration (`app.auth.*` in `application.yml`,
+`AUTH_ISSUER`/`AUTH_AUDIENCE`/`AUTH_COOKIE_NAME` in analysis-service) and must match across
+services. The request body limit is `app.http.max-request-body` (`1MB`) in both Spring services
+and `client_max_body_size` in nginx.
+
+Docker Compose passes each secret only to the services that use it (see the table); PostgreSQL,
+Kafka and the frontend receive none of them. The sample scripts read `INGESTION_API_KEY` and
+`RCP_USERNAME`/`RCP_PASSWORD` from the environment, falling back to `.env` and its bootstrap admin
+for local development.
 
 ## Spring Boot services
 
@@ -48,6 +85,7 @@ Both Spring Boot services read these environment variables. Docker Compose sets 
 | `KAFKA_TOPIC_ERROR_EVENTS_DLT` | `error-events.v1.dlt` | incident-service only: dead-letter topic |
 | `KAFKA_CONSUMER_CONCURRENCY` | `3` | incident-service only: consumer threads (at most one per partition is useful) |
 | `CORRELATION_MINIMUM_SEVERITY` | `ERROR` | incident-service only: events below this severity create no incidents |
+| Authentication variables | — | See [Authentication](#authentication) |
 
 Other settings in each `application.yml`:
 
@@ -56,8 +94,12 @@ Other settings in each `application.yml`:
   changes the schema itself.
 - The connection pool waits at most 5 seconds for a database connection, so an unreachable
   database is reported quickly: API calls return `503` and readiness reports `DOWN`.
-- Actuator exposes only `health` and `info`. The readiness group includes the database check,
-  but not Kafka (see [architecture.md](architecture.md#health-checks)).
+- Actuator exposes only `health` and `info`, both public. The readiness group includes the
+  database check, but not Kafka (see [architecture.md](architecture.md#health-checks)).
+- Spring Boot's generated default user is disabled; requests are authenticated by the platform's
+  own filter (see [security.md](security.md)).
+- `server.forward-headers-strategy: native`: the client address and scheme come from
+  `X-Forwarded-*` headers when they are sent by a private network address (the nginx proxy).
 
 ### Outbox publisher (ingestion-service, `app.outbox.*`)
 
@@ -106,6 +148,7 @@ Durations accept seconds (`120`) or ISO-8601 (`PT2M`).
 | `ANALYSIS_BURST_WINDOW` | `15` minutes | Window for bursts and overlapping activity |
 | `ANALYSIS_PRECEDING_WINDOW` | `2` minutes | How far back an error counts as "preceding" (time or trace link) |
 | `ANALYSIS_RELATED_THRESHOLD` | `40` | Minimum similarity score for a related incident (1–100) |
+| `AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN`, `ANALYSIS_RATE_LIMIT_PER_MINUTE` | see [Authentication](#authentication) | Token verification, calls to the other services, analyses per user and minute |
 | `LOG_FORMAT` | `text` | `json` for one ECS JSON object per line |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `SERVER_HOST` / `SERVER_PORT` | `0.0.0.0` / `8000` | Listen address |
@@ -147,7 +190,7 @@ requests. The normal build does not contain the demo data. See
 | ingestion-service | `backend/ingestion-service/src/main/resources/application.yml` | See above |
 | incident-service | `backend/incident-service/src/main/resources/application.yml` | See above |
 | analysis-service | `analysis-service/src/analysis_service/config.py` | See above; port `8000` |
-| frontend | `frontend/src/config.ts`, `frontend/vite.config.ts`, `frontend/nginx.conf` | Dashboard settings above; API proxy routes for development and Docker; demo-mode alias |
+| frontend | `frontend/src/config.ts`, `frontend/vite.config.ts`, `frontend/nginx.conf`, `frontend/security-headers.conf` | Dashboard settings above; API proxy routes for development and Docker; demo-mode alias; security headers |
 
 Spring Boot maps environment variables to properties, so any property can be overridden at
 runtime, for example `SERVER_PORT=9081` or `MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always`.

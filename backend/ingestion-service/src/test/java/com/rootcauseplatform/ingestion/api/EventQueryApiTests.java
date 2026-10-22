@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.context.annotation.Import;
 
 import com.rootcauseplatform.ingestion.ApiClient;
+import com.rootcauseplatform.ingestion.TestAuth;
 import com.rootcauseplatform.ingestion.TestcontainersConfiguration;
 
 import tools.jackson.databind.JsonNode;
@@ -34,7 +35,7 @@ class EventQueryApiTests {
 
     @BeforeEach
     void setUp() {
-        api = new ApiClient(port);
+        api = TestAuth.client(port);
         applicationName = "query-app-" + UUID.randomUUID().toString().substring(0, 8);
     }
 

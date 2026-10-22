@@ -8,7 +8,10 @@
 //   node scripts/capture-demo-data.mjs --applications demo-store --base http://localhost:3000
 //
 // Only reads data: it never creates events or triggers analyses. Event metadata is not captured.
+// Signs in with RCP_USERNAME / RCP_PASSWORD (any role), or for local development with the
+// bootstrap admin from the repository's .env file. Credentials are never printed or stored.
 
+import { existsSync, readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,8 +33,41 @@ const ingestion = `${values.base}/api/ingestion`
 const incident = `${values.base}/api/incident`
 const analysis = `${values.base}/api/analysis`
 
+function envFileValues() {
+  const path = resolve(dirname(fileURLToPath(import.meta.url)), '../../.env')
+  if (!existsSync(path)) return {}
+  return Object.fromEntries(
+    readFileSync(path, 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line.includes('=') && !line.trimStart().startsWith('#'))
+      .map((line) => [line.slice(0, line.indexOf('=')).trim(), line.slice(line.indexOf('=') + 1).trim()]),
+  )
+}
+
+async function signIn() {
+  const file = envFileValues()
+  const username = process.env.RCP_USERNAME || file.AUTH_BOOTSTRAP_ADMIN_USERNAME
+  const password = process.env.RCP_PASSWORD || file.AUTH_BOOTSTRAP_ADMIN_PASSWORD
+  if (!username || !password) {
+    console.error('Set RCP_USERNAME and RCP_PASSWORD to sign in.')
+    process.exit(2)
+  }
+  const response = await fetch(`${incident}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!response.ok) throw new Error(`Sign-in failed with HTTP ${response.status}`)
+  const cookie = response.headers.getSetCookie().find((value) => value.startsWith('rcp_session='))
+  return cookie.slice(0, cookie.indexOf(';'))
+}
+
+const sessionCookie = await signIn()
+
 async function get(url, { allowNotFound = false } = {}) {
-  const response = await fetch(url, { headers: { Accept: 'application/json', 'X-Correlation-Id': 'demo-data-capture' } })
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json', 'X-Correlation-Id': 'demo-data-capture', Cookie: sessionCookie },
+  })
   if (allowNotFound && response.status === 404) return null
   if (!response.ok) throw new Error(`GET ${url} failed with HTTP ${response.status}`)
   return response.json()

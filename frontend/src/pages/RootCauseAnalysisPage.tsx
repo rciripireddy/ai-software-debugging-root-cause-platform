@@ -1,8 +1,10 @@
-import { Info, ListTree, Play, RefreshCw, SearchCode } from 'lucide-react'
+import { Info, ListTree, Lock, Play, RefreshCw, SearchCode } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useApi } from '../api/ApiContext'
 import { ApiError } from '../api/http'
+import { useAuth } from '../auth/AuthContext'
+import { canRunAnalysis } from '../auth/types'
 import {
   AnalysisMeta,
   OtherCandidates,
@@ -142,6 +144,8 @@ function AnalysisPanel({ incidentId }: { incidentId: string }) {
   const [runError, setRunError] = useState<unknown>(undefined)
 
   const analysis = fresh ?? stored.data ?? null
+  // Also enforced by analysis-service, which answers 403 for other roles.
+  const mayRun = canRunAnalysis(useAuth().session)
   const incidentMissing = incident.error instanceof ApiError && incident.error.isNotFound
 
   const run = async () => {
@@ -157,7 +161,11 @@ function AnalysisPanel({ incidentId }: { incidentId: string }) {
     }
   }
 
-  const runButton = (
+  const runButton = !mayRun ? (
+    <p className="inline-note" role="note">
+      <Lock size={14} aria-hidden="true" /> Running an analysis requires the Administrator role.
+    </p>
+  ) : (
     <button
       type="button"
       className="button button--primary"
@@ -226,7 +234,10 @@ function AnalysisPanel({ incidentId }: { incidentId: string }) {
         !incidentMissing && (
           <section className="card">
             <EmptyState icon={SearchCode} title="Not analyzed yet">
-              No analysis is stored for this incident. Run an analysis to see potential causes with their evidence.
+              No analysis is stored for this incident.{' '}
+              {mayRun
+                ? 'Run an analysis to see potential causes with their evidence.'
+                : 'An administrator can run an analysis to show potential causes with their evidence.'}
             </EmptyState>
           </section>
         )

@@ -47,12 +47,23 @@ export class ApiError extends Error {
 export type Validator<T> = (body: unknown) => body is T
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST'
+  method?: 'GET' | 'POST' | 'PUT'
+  /** Sent as JSON. */
+  body?: unknown
+  headers?: Record<string, string>
   signal?: AbortSignal
 }
 
 export interface HttpClient {
   request<T>(service: ServiceName, url: string, validate: Validator<T>, options?: RequestOptions): Promise<T>
+}
+
+/** Connects the client to the signed-in session (see auth/sessionStore.ts). */
+export interface SessionHooks {
+  /** Sent as X-CSRF-Token with state-changing requests, which the session cookie alone cannot authorize. */
+  csrfToken(): string | undefined
+  /** Called when a service answers 401: the session expired or is no longer valid. */
+  onUnauthorized(): void
 }
 
 // nginx and the Vite proxy answer these when the backend container is not reachable.
@@ -62,16 +73,24 @@ function isProblem(body: unknown): body is { title?: string; detail?: string; co
   return typeof body === 'object' && body !== null && ('title' in body || 'detail' in body)
 }
 
-export function createHttpClient(fetchImpl: typeof fetch, timeoutMs: number): HttpClient {
+export function createHttpClient(fetchImpl: typeof fetch, timeoutMs: number, session?: SessionHooks): HttpClient {
   return {
     async request<T>(service: ServiceName, url: string, validate: Validator<T>, options: RequestOptions = {}) {
       const timeout = AbortSignal.timeout(timeoutMs)
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
+      const method = options.method ?? 'GET'
+      const headers: Record<string, string> = { Accept: 'application/json', ...options.headers }
+      if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+      const csrfToken = method === 'GET' ? undefined : session?.csrfToken()
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken
       let response: Response
       try {
         response = await fetchImpl(url, {
-          method: options.method ?? 'GET',
-          headers: { Accept: 'application/json' },
+          method,
+          headers,
+          body: options.body === undefined ? undefined : JSON.stringify(options.body),
+          // The session cookie is only sent to this origin (the dashboard's proxy).
+          credentials: 'same-origin',
           signal,
         })
       } catch (error) {
@@ -87,6 +106,7 @@ export function createHttpClient(fetchImpl: typeof fetch, timeoutMs: number): Ht
       }
 
       const body: unknown = await response.json().catch(() => undefined)
+      if (response.status === 401) session?.onUnauthorized()
       if (!response.ok) {
         const problem = isProblem(body) ? body : undefined
         if (!problem && GATEWAY_STATUSES.has(response.status)) {

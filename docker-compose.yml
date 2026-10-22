@@ -15,6 +15,13 @@ x-spring-service-environment: &spring-service-environment
   # One JSON (Elastic Common Schema) log record per line, ready for log shipping.
   LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
 
+# Secrets of the three application services (see docs/security.md): the key that signs and
+# verifies access tokens, and the internal credential analysis-service uses to call the others.
+# Only these services receive them; postgres, kafka and the frontend do not.
+x-auth-environment: &auth-environment
+  AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is not set. See .env.example.}
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is not set. See .env.example.}
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -71,7 +78,11 @@ services:
 
   ingestion-service:
     build: ./backend/ingestion-service
-    environment: *spring-service-environment
+    environment:
+      <<: [*spring-service-environment, *auth-environment]
+      # Only ingestion-service needs the key that log producers send.
+      INGESTION_API_KEY: ${INGESTION_API_KEY:?INGESTION_API_KEY is not set. See .env.example.}
+      INGESTION_RATE_LIMIT_PER_MINUTE: ${INGESTION_RATE_LIMIT_PER_MINUTE:-600}
     ports:
       - "${INGESTION_SERVICE_PORT:-8081}:8081"
     depends_on:
@@ -90,7 +101,19 @@ services:
 
   incident-service:
     build: ./backend/incident-service
-    environment: *spring-service-environment
+    environment:
+      <<: [*spring-service-environment, *auth-environment]
+      # incident-service owns the user accounts and issues the access tokens.
+      AUTH_TOKEN_TTL: ${AUTH_TOKEN_TTL:-60m}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_LOGIN_MAX_FAILURES_PER_USER: ${AUTH_LOGIN_MAX_FAILURES_PER_USER:-5}
+      AUTH_LOGIN_MAX_FAILURES_PER_CLIENT: ${AUTH_LOGIN_MAX_FAILURES_PER_CLIENT:-20}
+      AUTH_LOGIN_FAILURE_WINDOW: ${AUTH_LOGIN_FAILURE_WINDOW:-15m}
+      # Accounts created at startup if missing; no account is created while these are empty.
+      AUTH_BOOTSTRAP_ADMIN_USERNAME: ${AUTH_BOOTSTRAP_ADMIN_USERNAME:-}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
+      AUTH_BOOTSTRAP_VIEWER_USERNAME: ${AUTH_BOOTSTRAP_VIEWER_USERNAME:-}
+      AUTH_BOOTSTRAP_VIEWER_PASSWORD: ${AUTH_BOOTSTRAP_VIEWER_PASSWORD:-}
     ports:
       - "${INCIDENT_SERVICE_PORT:-8082}:8082"
     depends_on:
@@ -113,11 +136,13 @@ services:
   analysis-service:
     build: ./analysis-service
     environment:
-      <<: *database-environment
-      # Incidents and events are read through the other services' REST APIs, on request.
+      <<: [*database-environment, *auth-environment]
+      # Incidents and events are read through the other services' REST APIs, on request,
+      # authenticated with INTERNAL_SERVICE_TOKEN.
       INCIDENT_SERVICE_URL: http://incident-service:8082
       INGESTION_SERVICE_URL: http://ingestion-service:8081
       LOG_FORMAT: json
+      ANALYSIS_RATE_LIMIT_PER_MINUTE: ${ANALYSIS_RATE_LIMIT_PER_MINUTE:-30}
     ports:
       - "${ANALYSIS_SERVICE_PORT:-8000}:8000"
     depends_on:
