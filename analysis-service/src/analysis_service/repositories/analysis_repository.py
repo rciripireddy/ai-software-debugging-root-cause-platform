@@ -10,6 +10,7 @@ from analysis_service.models.analysis import (
     AnalysisHistoryItem,
     AnalysisReport,
     IncidentAnalysis,
+    LatestAnalysis,
 )
 
 
@@ -78,6 +79,31 @@ class AnalysisRepository:
             )
             rows = await cursor.fetchall()
         return [AnalysisHistoryItem.model_validate(row) for row in rows]
+
+    async def latest_per_incident(
+        self, incident_ids: list[UUID] | None, limit: int
+    ) -> list[LatestAnalysis]:
+        """Latest revision per incident, most recently generated first; all incidents when
+        `incident_ids` is None."""
+        async with self._pool.connection() as connection:
+            cursor = connection.cursor(row_factory=dict_row)
+            await cursor.execute(
+                """SELECT * FROM (
+                       SELECT DISTINCT ON (incident_id)
+                              incident_id, id, revision, analysis_version, generated_at, confidence,
+                              primary_category, primary_title, summary,
+                              result->'incident'->>'application' AS application,
+                              result->'incident'->>'service' AS service,
+                              result->'incident'->>'environment' AS environment
+                       FROM analysis.incident_analyses
+                       WHERE %(ids)s::uuid[] IS NULL OR incident_id = ANY(%(ids)s::uuid[])
+                       ORDER BY incident_id, revision DESC) latest
+                   ORDER BY generated_at DESC, incident_id
+                   LIMIT %(limit)s""",
+                {"ids": incident_ids, "limit": limit},
+            )
+            rows = await cursor.fetchall()
+        return [LatestAnalysis.model_validate(row) for row in rows]
 
     async def ping(self) -> None:
         async with self._pool.connection(timeout=2) as connection:

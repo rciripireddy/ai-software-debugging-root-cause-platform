@@ -11,6 +11,7 @@ from analysis_service.analysis.engine import AnalysisSettings
 from analysis_service.models.analysis import (
     AnalysisHistory,
     IncidentAnalysis,
+    LatestAnalyses,
     RelatedIncidents,
 )
 from analysis_service.repositories.analysis_repository import AnalysisRepository
@@ -95,6 +96,11 @@ class AnalysisService:
         if not items:
             raise AnalysisNotFoundError(incident_id)
         return AnalysisHistory(incident_id=incident_id, items=items)
+
+    async def latest_per_incident(
+        self, incident_ids: list[UUID] | None, limit: int
+    ) -> LatestAnalyses:
+        return LatestAnalyses(items=await self._repository.latest_per_incident(incident_ids, limit))
 
     async def related(self, incident_id: UUID) -> RelatedIncidents:
         """Related incidents, computed now and not stored."""

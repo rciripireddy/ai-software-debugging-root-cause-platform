@@ -1,44 +1,44 @@
 import { useCallback, useEffect, useState } from 'react'
-import { checkHealth, type HealthResult, type MonitoredService } from '../services/serviceHealth'
+import type { DashboardApi, MonitoredService } from '../api/dashboardApi'
+import type { HealthResult } from '../types/api'
 
-export const HEALTH_REFRESH_INTERVAL_MS = 15_000
+type HealthResults = Partial<Record<MonitoredService['id'], HealthResult>>
 
-type HealthResults = Record<string, HealthResult>
-
-async function checkAll(services: MonitoredService[]): Promise<HealthResults> {
+async function checkAll(api: DashboardApi): Promise<HealthResults> {
   const entries = await Promise.all(
-    services.map(async (service) => [service.id, await checkHealth(service.healthPath)] as const),
+    api.services.map(async (service) => [service.id, await api.checkHealth(service)] as const),
   )
   return Object.fromEntries(entries)
 }
 
-export function useServiceHealth(services: MonitoredService[]) {
+/** Checks every service now and then every `intervalMs`. A failing check never throws. */
+export function useServiceHealth(api: DashboardApi, intervalMs: number) {
   const [results, setResults] = useState<HealthResults>({})
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     const poll = async () => {
-      const next = await checkAll(services)
+      const next = await checkAll(api)
       if (!cancelled) setResults(next)
     }
 
     void poll()
-    const timer = window.setInterval(() => void poll(), HEALTH_REFRESH_INTERVAL_MS)
+    const timer = window.setInterval(() => void poll(), intervalMs)
     return () => {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [services])
+  }, [api, intervalMs])
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
     try {
-      setResults(await checkAll(services))
+      setResults(await checkAll(api))
     } finally {
       setIsRefreshing(false)
     }
-  }, [services])
+  }, [api])
 
   return { results, isRefreshing, refresh }
 }

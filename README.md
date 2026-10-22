@@ -7,11 +7,12 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 4 — root-cause analysis and failure-pattern detection.**
+> **Project status: Phase 5 — dashboard integration.**
 > Log events are ingested, published reliably to Kafka and correlated into incidents
-> automatically. The analysis service analyzes an incident on request and suggests **potential**
-> root causes with evidence, using deterministic rules (no machine learning, no external AI
-> service). The dashboard is not yet connected to the APIs. See [Roadmap](#roadmap).
+> automatically. The analysis service suggests **potential** root causes with evidence, using
+> deterministic rules (no machine learning, no external AI service). The React dashboard shows
+> all of it from the real APIs, and can also run as a clearly labelled demo with bundled
+> synthetic data. See [Roadmap](#roadmap).
 
 ## What works today
 
@@ -27,7 +28,7 @@ React dashboard.
   its occurrence count, first/last seen and severity. Processing is **idempotent**, so
   redelivered messages are not counted twice; failing messages are **retried a bounded number of
   times** and then moved to a **dead-letter topic**.
-- **Incident API**: list incidents with filters (status, severity, application, service,
+- **Incident API**: list incidents with filters (status, severity, application, service, title,
   environment) and pagination, and retrieve one with its recent events. The Phase 2 manual
   creation endpoint still works but is deprecated.
 - **PostgreSQL data model** managed by Flyway migrations, with one schema per service and no
@@ -51,14 +52,15 @@ React dashboard.
   revisions. On 16 labelled synthetic scenarios the rules give the expected category for all 16;
   these scenarios were written together with the rules, so this is a regression check, not a
   measure of real-world accuracy. See [docs/analysis.md](docs/analysis.md).
-- **React dashboard** with responsive navigation:
-  - **Service Health** — *live*: polls the three backend services and shows their status.
-  - **Overview**, **Error Monitoring**, **Root Cause Analysis** — *preview*: layouts that are not
-    yet connected to the APIs. Each page is labelled **Live** or **Preview**.
+- **React dashboard** on the real APIs (see [Dashboard](#dashboard)): overview figures and
+  charts, error events with filters and stack traces, incidents with filters and details, root
+  cause analysis with evidence, confidence and related incidents, and live service health. Every
+  page handles loading, empty and unavailable states, and works from 390 px phones to desktops.
 - **Docker Compose** environment with all services, PostgreSQL and a single-node Kafka broker
   (KRaft), with health checks and persistent volumes.
 - **Demo data**: synthetic log events in [`sample-data/`](sample-data/) and a script that sends them
-  and shows the incidents created from them.
+  and shows the incidents created from them; a **demo mode** of the dashboard
+  (`npm run build:demo`) that serves bundled synthetic data without any backend.
 
 ## Architecture
 
@@ -73,9 +75,9 @@ flowchart LR
     analysis["Analysis API<br/>(analysis-service)"] -->|"read incidents (REST)"| consumer
     analysis -->|"read stack traces (REST)"| ingestion
     analysis -->|"store revisions"| analyses[("PostgreSQL<br/>incident_analyses")]
-    ui["React dashboard"] -.->|"service health"| ingestion
-    ui -.-> consumer
-    ui -.-> analysis
+    ui["React dashboard<br/>(nginx proxy /api/*)"] -->|"events, activity"| ingestion
+    ui -->|"incidents, stats"| consumer
+    ui -->|"analyses"| analysis
 ```
 
 ingestion-service returns `201` as soon as the event and its outbox message are committed; it
@@ -109,7 +111,7 @@ Kafka messages. analysis-service runs on request and is not part of that pipelin
 ├── database/init/             PostgreSQL initialization (schemas)
 ├── sample-data/               Demo log events, a loader script, labelled analysis scenarios
 ├── docs/                      Architecture, API, database and configuration notes
-├── screenshots/               Dashboard screenshots (added in later phases)
+├── screenshots/               Dashboard screenshots
 ├── docker-compose.yml
 └── .env.example               Template for local configuration
 ```
@@ -141,7 +143,7 @@ their default ports.
 
 | URL | What |
 | --- | --- |
-| <http://localhost:3000> | Dashboard |
+| <http://localhost:3000> | **Dashboard** (all APIs are also reachable through it under `/api/ingestion`, `/api/incident`, `/api/analysis`) |
 | <http://localhost:8081/api/v1/logs> | Log ingestion API (`POST`) |
 | <http://localhost:8082/api/v1/incidents> | Incident API |
 | <http://localhost:8081/actuator/health> | Ingestion service health |
@@ -152,7 +154,7 @@ their default ports.
 
 Stop the stack with `docker compose down` (add `-v` to also delete the PostgreSQL and Kafka volumes).
 
-### Try the APIs with demo data
+### Try it with demo data
 
 ```bash
 # Send 10 synthetic events (demo data), wait for the incidents created from them and analyze them
@@ -180,7 +182,9 @@ The single-occurrence incidents are capped at `MEDIUM`; every result lists its e
 confidence calculation and its limitations.
 
 Running it again with the same `--application` adds the new occurrences to the same open
-incidents. Query the incident API directly:
+incidents. Open <http://localhost:3000> to see the events, incidents and analyses in the
+dashboard. For a larger set (16 labelled scenarios across 13 services), run
+`python -m evaluation --live --application demo-store` in `analysis-service/`. Query the incident API directly:
 
 ```bash
 curl 'http://localhost:8082/api/v1/incidents?application=demo-shop-trial&status=OPEN'
@@ -256,10 +260,50 @@ python -m evaluation              # evaluation on the labelled synthetic scenari
 cd frontend
 npm ci
 npm run dev                       # http://localhost:5173, proxies /api/* to the local services
+npm run dev:demo                  # demo mode: bundled synthetic data, no backend needed
 npm run lint
 npm test
-npm run build
+npm run build                     # live build (used by the Docker image)
+npm run build:demo                # static demo build in dist-demo/
 ```
+
+## Dashboard
+
+| Page | What it shows |
+| --- | --- |
+| **Overview** | Unresolved, total and fatal incidents, services affected, errors received in the last 24 h; new incidents per day, unresolved incidents by service, errors by service; recent incident activity and latest analyses. Refreshes every 30 s |
+| **Error Monitoring** | Events newest first with severity, service, exception, message, fingerprint and trace/correlation IDs; filters for text, application, service, environment and severity; expand an event for its source and stack trace |
+| **Incidents** | Incidents with status, severity, service, occurrences, first/last seen, fingerprint and analysis state; filters for text, status, severity, application, service and environment |
+| **Incident detail** | Summary, the most recent occurrence with its stack trace, and the recent events (expand for source and stack trace) |
+| **Root Cause Analysis** | Pick an incident, see its stored analysis or run one: the primary candidate ("Most likely cause based on available evidence" only for `HIGH`, otherwise "Potential root cause") with category, confidence band, affected component, explanation and evidence; the point calculation on request; limitations; other candidates; related incidents with score and matching signals; trace-linked errors; revision history |
+| **Service Health** | Live checks of the three services every 15 s with status, response time, endpoint and last check |
+
+Filters and page numbers are part of the URL. Each section loads on its own, so an unavailable
+service shows a clear message with a Retry button in the sections that need it while the rest of
+the page keeps working. Confidence is always shown as `LOW`/`MEDIUM`/`HIGH`, never as a
+percentage.
+
+**Live and demo mode.** The normal build (Docker, `npm run dev`) only uses the real APIs and shows
+"Live" on every page. The demo build (`npm run build:demo`) shows bundled synthetic data captured
+from a local run of the platform, marks every page "Demo data" with a banner, and makes no API
+requests; it cannot ingest or analyze anything. See
+[frontend/src/demo/README.md](frontend/src/demo/README.md).
+
+### Screenshots
+
+Taken from the running Docker stack with synthetic data (see [screenshots/](screenshots/)).
+
+| Overview | Root Cause Analysis |
+| --- | --- |
+| ![Overview](screenshots/overview.png) | ![Root Cause Analysis](screenshots/root-cause-analysis.png) |
+
+| Error Monitoring | Incident detail |
+| --- | --- |
+| ![Error Monitoring](screenshots/error-monitoring.png) | ![Incident detail](screenshots/incident-detail.png) |
+
+| Service Health | Phone (390 px) |
+| --- | --- |
+| ![Service Health](screenshots/service-health.png) | ![Overview on a phone](screenshots/overview-mobile.png) |
 
 ## Configuration
 
@@ -271,6 +315,7 @@ No credentials are stored in source files.
 
 - [docs/architecture.md](docs/architecture.md) — components, request routing, health checks, logging
 - [docs/api.md](docs/api.md) — REST endpoints with examples and error format
+- [frontend/README.md](frontend/README.md) — dashboard pages, structure and commands
 - [docs/analysis.md](docs/analysis.md) — how incidents are analyzed: normalization, stack traces, rules, confidence, similarity, evaluation and limitations
 - [docs/events.md](docs/events.md) — Kafka topics, `ErrorEventCreated` contract, outbox, correlation, idempotency, retries and dead-letter topic
 - [docs/database.md](docs/database.md) — data model, constraints, indexes and migrations
@@ -283,8 +328,8 @@ No credentials are stored in source files.
 | 1 | Project foundation: services, dashboard shell, Docker environment, tests | Done |
 | 2 | Backend services and data model: ingestion API, fingerprinting, incident API, PostgreSQL schema, validation, structured logging | Done |
 | 3 | Event streaming and correlation: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic | Done |
-| 4 | Root cause analysis: rule-based analysis service with recurring patterns, related incidents and ranked potential causes with evidence | **Current** |
-| 5 | Dashboard integration: overview, error monitoring and root cause pages use real data | Planned |
+| 4 | Root cause analysis: rule-based analysis service with recurring patterns, related incidents and ranked potential causes with evidence | Done |
+| 5 | Dashboard integration: all pages on the real APIs, incidents and incident detail, analysis with evidence, demo mode | **Current** |
 | 6 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |
 
 Scope of later phases may be refined as the project progresses.

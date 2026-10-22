@@ -1,16 +1,15 @@
-import { Activity, AlertTriangle, LayoutDashboard, SearchCode, type LucideIcon } from 'lucide-react'
-import type { FeatureStatus } from './components/FeatureStatusBadge'
+import { Activity, AlertTriangle, LayoutDashboard, ListTree, SearchCode, type LucideIcon } from 'lucide-react'
 
 export interface NavItem {
   to: string
   label: string
   icon: LucideIcon
-  status: FeatureStatus
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard, status: 'preview' },
-  { to: '/errors', label: 'Error Monitoring', icon: AlertTriangle, status: 'preview' },
-  { to: '/root-cause', label: 'Root Cause Analysis', icon: SearchCode, status: 'preview' },
-  { to: '/health', label: 'Service Health', icon: Activity, status: 'live' },
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/errors', label: 'Error Monitoring', icon: AlertTriangle },
+  { to: '/incidents', label: 'Incidents', icon: ListTree },
+  { to: '/root-cause', label: 'Root Cause Analysis', icon: SearchCode },
+  { to: '/health', label: 'Service Health', icon: Activity },
 ]

@@ -1,45 +1,31 @@
-export type HealthStatus = 'UP' | 'DOWN' | 'UNREACHABLE'
+import type { HealthResult } from '../types/api'
+import type { MonitoredService } from './dashboardApi'
 
-export interface MonitoredService {
-  id: string
-  name: string
-  runtime: string
-  description: string
-  healthPath: string
+export function monitoredServices(base: { ingestion: string; incident: string; analysis: string }): MonitoredService[] {
+  return [
+    {
+      id: 'ingestion-service',
+      name: 'Ingestion Service',
+      runtime: 'Java 21 · Spring Boot',
+      description: 'Receives and stores log and error events and publishes them to Kafka.',
+      healthPath: `${base.ingestion}/actuator/health`,
+    },
+    {
+      id: 'incident-service',
+      name: 'Incident Service',
+      runtime: 'Java 21 · Spring Boot',
+      description: 'Correlates error events from Kafka into incidents and serves them.',
+      healthPath: `${base.incident}/actuator/health`,
+    },
+    {
+      id: 'analysis-service',
+      name: 'Analysis Service',
+      runtime: 'Python · FastAPI',
+      description: 'Analyzes incidents and suggests potential root causes with evidence.',
+      healthPath: `${base.analysis}/health`,
+    },
+  ]
 }
-
-export interface HealthResult {
-  status: HealthStatus
-  checkedAt: Date
-  httpStatus?: number
-  latencyMs?: number
-  error?: string
-}
-
-// Paths are relative so they work behind the Vite dev proxy and the nginx proxy in Docker.
-export const MONITORED_SERVICES: MonitoredService[] = [
-  {
-    id: 'ingestion-service',
-    name: 'Ingestion Service',
-    runtime: 'Java 21 · Spring Boot',
-    description: 'Receives and stores application logs and error events.',
-    healthPath: '/api/ingestion/actuator/health',
-  },
-  {
-    id: 'incident-service',
-    name: 'Incident Service',
-    runtime: 'Java 21 · Spring Boot',
-    description: 'Creates and serves incidents built from error events.',
-    healthPath: '/api/incident/actuator/health',
-  },
-  {
-    id: 'analysis-service',
-    name: 'Analysis Service',
-    runtime: 'Python · FastAPI',
-    description: 'Will analyze incidents for likely root causes.',
-    healthPath: '/api/analysis/health',
-  },
-]
 
 const DEFAULT_TIMEOUT_MS = 5000
 

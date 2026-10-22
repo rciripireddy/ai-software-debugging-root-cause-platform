@@ -114,6 +114,32 @@ The `ANALYSIS_*` windows and threshold change results for the same input. `analy
 identifies the rules in the code, not these settings, so stored analyses made with non-default
 values are not marked as such (see [analysis.md](analysis.md#persistence-and-versioning)).
 
+## Dashboard
+
+The dashboard is a static build; these Vite variables are read **at build time** (for example
+`VITE_REFRESH_LISTS_SECONDS=120 npm run build`). The defaults fit both the Vite dev server and the
+nginx image, so Docker needs none of them.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `VITE_INGESTION_API_BASE` | `/api/ingestion` | Base path of the ingestion API |
+| `VITE_INCIDENT_API_BASE` | `/api/incident` | Base path of the incident API |
+| `VITE_ANALYSIS_API_BASE` | `/api/analysis` | Base path of the analysis API |
+| `VITE_REFRESH_OVERVIEW_SECONDS` | `30` | Automatic refresh of the Overview page |
+| `VITE_REFRESH_LISTS_SECONDS` | `60` | Automatic refresh of event and incident lists and incident details |
+| `VITE_REFRESH_HEALTH_SECONDS` | `15` | Service Health checks |
+| `VITE_REQUEST_TIMEOUT_SECONDS` | `10` | Timeout of each API request |
+
+The base paths are relative on purpose: the browser only talks to the dashboard's own origin and
+the proxy forwards `/api/<service>/…` to the services (see
+[architecture.md](architecture.md#request-routing)), so no backend URL is compiled into the bundle.
+The Root Cause Analysis page refreshes only on request or after an analysis is run.
+
+**Demo mode** is selected with Vite's mode, not a variable: `npm run dev:demo` and
+`npm run build:demo` (output in `frontend/dist-demo/`) serve bundled synthetic data and make no API
+requests. The normal build does not contain the demo data. See
+[frontend/src/demo/README.md](../frontend/src/demo/README.md).
+
 ## Service configuration
 
 | Service | File | Notable settings |
@@ -121,7 +147,7 @@ values are not marked as such (see [analysis.md](analysis.md#persistence-and-ver
 | ingestion-service | `backend/ingestion-service/src/main/resources/application.yml` | See above |
 | incident-service | `backend/incident-service/src/main/resources/application.yml` | See above |
 | analysis-service | `analysis-service/src/analysis_service/config.py` | See above; port `8000` |
-| frontend | `frontend/vite.config.ts`, `frontend/nginx.conf` | API proxy routes for development and Docker |
+| frontend | `frontend/src/config.ts`, `frontend/vite.config.ts`, `frontend/nginx.conf` | Dashboard settings above; API proxy routes for development and Docker; demo-mode alias |
 
 Spring Boot maps environment variables to properties, so any property can be overridden at
 runtime, for example `SERVER_PORT=9081` or `MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always`.

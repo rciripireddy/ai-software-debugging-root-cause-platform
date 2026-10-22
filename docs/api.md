@@ -150,6 +150,84 @@ Returns a stored event, including its application and `metadata`.
 }
 ```
 
+### `GET /api/v1/logs`
+
+Lists stored events, most recent event timestamp first (used by the dashboard's Error
+Monitoring page). Stack traces, metadata and raw payloads are **not** included; `hasStackTrace`
+says whether `GET /api/v1/logs/{id}` has one.
+
+| Query parameter | Default | Description |
+| --- | --- | --- |
+| `application` | — | Application name (case-insensitive) |
+| `service` | — | Service name (case-insensitive) |
+| `environment` | — | Environment (case-insensitive) |
+| `severity` | — | `DEBUG`, `INFO`, `WARN`, `ERROR` or `FATAL` |
+| `q` | — | Text contained in the message or exception type (case-insensitive, up to 200 characters; `%` and `_` match literally) |
+| `page` | `0` | Zero-based page number |
+| `size` | `20` | Page size, 1–100 |
+
+```bash
+curl 'http://localhost:8081/api/v1/logs?application=demo-store&service=payment-service&severity=ERROR&size=1'
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "01a16443-2ca9-737b-bcf6-b509da454a84",
+      "application": {
+        "id": "8e1c03b5-a68d-4eff-9b75-b64f7fc291fd",
+        "name": "demo-store",
+        "service": "payment-service",
+        "environment": "staging"
+      },
+      "timestamp": "2026-10-17T16:05:12.512Z",
+      "severity": "ERROR",
+      "message": "Refund request failed",
+      "exceptionType": "java.net.SocketTimeoutException",
+      "source": "com.shop.payment.RefundClient",
+      "host": "payment-7c9d4-abcde",
+      "traceId": null,
+      "correlationId": null,
+      "fingerprint": "ad788aa27546bac29835795dd8126a10d032bc85f714bf4cad2e29802b463ffb",
+      "hasStackTrace": true,
+      "receivedAt": "2026-10-22T15:38:06.377554Z"
+    }
+  ],
+  "page": 0,
+  "size": 1,
+  "totalItems": 8,
+  "totalPages": 8
+}
+```
+
+### `GET /api/v1/logs/activity`
+
+Counts of events **received** (stored) in the last `hours` hours (default `24`, 1–168), by
+severity and by service. Counted by time of receipt, not by the events' own timestamps.
+`errors` counts `ERROR` and `FATAL` events.
+
+```json
+{
+  "since": "2026-10-21T18:50:53.042518209Z",
+  "until": "2026-10-22T18:50:53.042518209Z",
+  "totalEvents": 106,
+  "bySeverity": { "DEBUG": 0, "INFO": 2, "WARN": 4, "ERROR": 96, "FATAL": 4 },
+  "byService": [
+    { "service": "payment-service", "events": 26, "errors": 24 },
+    { "service": "checkout-service", "events": 14, "errors": 12 }
+  ]
+}
+```
+
+(`byService` shortened.)
+
+### `GET /api/v1/applications`
+
+All registered applications (`{"items": [{"id", "name", "service", "environment",
+"registeredAt"}]}`), sorted by name, service and environment. The dashboard uses them as filter
+options.
+
 ## Incident service (port 8082)
 
 Incidents are created **automatically**: incident-service consumes the `ErrorEventCreated`
@@ -210,6 +288,7 @@ Lists incidents, most recent activity (`lastSeenAt`) first.
 | `application` | — | Application name (case-insensitive) |
 | `service` | — | Service name (case-insensitive) |
 | `environment` | — | Environment (case-insensitive) |
+| `q` | — | Text contained in the title (case-insensitive, up to 200 characters) |
 | `page` | `0` | Zero-based page number |
 | `size` | `20` | Page size, 1–100 |
 
@@ -243,6 +322,43 @@ curl 'http://localhost:8082/api/v1/incidents?application=demo-shop&status=OPEN&s
 
 There is no endpoint to change an incident's status yet; `RESOLVED` can currently only be set
 directly in the database.
+
+### `GET /api/v1/incidents/stats`
+
+Aggregate counts for the dashboard overview, computed with SQL aggregates on each request.
+
+| Field | Meaning |
+| --- | --- |
+| `totalIncidents`, `byStatus` | All incidents, and per status |
+| `unresolvedBySeverity` | `OPEN` and `INVESTIGATING` incidents per severity |
+| `servicesAffected` | Distinct services with at least one unresolved incident |
+| `topServices` | Up to 8 services with the most unresolved incidents, with their total occurrences |
+| `newIncidentsPerDay` | Incidents per UTC day of their **first occurrence**, for the last `days` days (default `14`, 1–90), including days with 0 |
+
+```bash
+curl 'http://localhost:8082/api/v1/incidents/stats?days=3'
+```
+
+```json
+{
+  "totalIncidents": 49,
+  "byStatus": { "OPEN": 49, "INVESTIGATING": 0, "RESOLVED": 0 },
+  "unresolvedBySeverity": { "DEBUG": 0, "INFO": 0, "WARN": 0, "ERROR": 47, "FATAL": 2 },
+  "servicesAffected": 15,
+  "topServices": [
+    { "service": "payment-service", "unresolvedIncidents": 12, "occurrences": 33 },
+    { "service": "checkout-service", "unresolvedIncidents": 6, "occurrences": 16 }
+  ],
+  "newIncidentsPerDay": [
+    { "date": "2026-10-20", "count": 0 },
+    { "date": "2026-10-21", "count": 0 },
+    { "date": "2026-10-22", "count": 1 }
+  ],
+  "generatedAt": "2026-10-22T18:50:53.180617079Z"
+}
+```
+
+(`topServices` shortened.)
 
 ### `POST /api/v1/incidents` (deprecated)
 
@@ -298,6 +414,44 @@ when an analysis is requested.
 The examples come from the synthetic scenarios in
 [`sample-data/analysis-scenarios/`](../sample-data/analysis-scenarios/), sent through the
 ingestion API under the application `analysis-eval-e2e`.
+
+### `GET /api/v1/analysis/incidents`
+
+The latest analysis **summary** (no candidates or evidence) per incident, most recently
+generated first. With repeated `incidentId` parameters (up to 100) only those incidents are
+returned; incidents without an analysis are left out. Without them, the most recent analyses of
+any incident. Used by the dashboard to show the analysis state of a page of incidents in one
+request.
+
+| Query parameter | Default | Description |
+| --- | --- | --- |
+| `incidentId` | — | Incident ID; repeat for several |
+| `limit` | `20` | Maximum number of items, 1–100 |
+
+```bash
+curl 'http://localhost:8000/api/v1/analysis/incidents?limit=1'
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "c91d2deb-4b8f-4031-ba09-5e58c9565596",
+      "revision": 2,
+      "analysisVersion": "1.0.0",
+      "generatedAt": "2026-10-22T16:22:28.009114Z",
+      "confidence": "LOW",
+      "primaryCategory": "UNKNOWN",
+      "primaryTitle": "Insufficient evidence to determine a cause",
+      "summary": "Failure in notification-service (staging): 2 occurrences within 5 minutes (burst). No cause category is supported by the available evidence.",
+      "incidentId": "01a16416-a98a-7379-9150-ee2872d8e9a3",
+      "application": "phase4-checks",
+      "service": "notification-service",
+      "environment": "staging"
+    }
+  ]
+}
+```
 
 ### `POST /api/v1/analysis/incidents/{incidentId}`
 

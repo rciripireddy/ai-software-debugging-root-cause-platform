@@ -59,6 +59,6 @@ class IngestionServiceApplicationTests {
         assertThat(jdbcTemplate.queryForList(
                 "select version from ingestion.flyway_schema_history where success and version is not null",
                 String.class))
-                .contains("1", "2");
+                .contains("1", "2", "3");
     }
 }

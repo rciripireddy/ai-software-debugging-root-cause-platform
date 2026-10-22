@@ -8,7 +8,12 @@ from fastapi.responses import JSONResponse
 
 from analysis_service import __version__
 from analysis_service.logging_config import SERVICE_NAME
-from analysis_service.models.analysis import AnalysisHistory, IncidentAnalysis, RelatedIncidents
+from analysis_service.models.analysis import (
+    AnalysisHistory,
+    IncidentAnalysis,
+    LatestAnalyses,
+    RelatedIncidents,
+)
 from analysis_service.services.analysis_service import AnalysisService
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
@@ -27,6 +32,27 @@ def _service(request: Request) -> AnalysisService:
 
 # Path parameter named like the JSON fields (camelCase), also in validation errors.
 IncidentId = Annotated[UUID, Path(alias="incidentId", description="Incident ID (UUID)")]
+
+
+@router.get(
+    "/incidents",
+    response_model=LatestAnalyses,
+    responses={400: _ERRORS[400], 503: _ERRORS[503]},
+    summary="Latest analysis per incident (summary only), most recent first",
+)
+async def latest_analyses(
+    request: Request,
+    incident_ids: Annotated[
+        list[UUID] | None,
+        Query(
+            alias="incidentId",
+            max_length=100,
+            description="Only these incidents (repeat the parameter); default: all incidents",
+        ),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> LatestAnalyses:
+    return await _service(request).latest_per_incident(incident_ids, limit)
 
 
 @router.post(

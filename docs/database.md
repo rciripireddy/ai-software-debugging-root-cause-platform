@@ -22,6 +22,7 @@ disagree. Applied migrations are never edited; changes are made with new migrati
 | --- | --- | --- |
 | `ingestion` V1 | 2 | `applications`, `error_events` |
 | `ingestion` V2 | 3 | `outbox_events` (transactional outbox) |
+| `ingestion` V3 | 5 | Indexes for listing events newest first and counting recently received events |
 | `incident` V1 | 2 | `incidents`, `incident_events`, with foreign keys into the `ingestion` schema |
 | `incident` V2 | 3 | Copies application and event details into the incident tables, drops the foreign keys into `ingestion`, adds `processed_events` |
 | `analysis` V1 | 4 | `incident_analyses` |
@@ -207,6 +208,8 @@ advisory lock, so revisions stay sequential.
 | `ix_error_events_trace_id`, `ix_error_events_correlation_id` | Following a request across services (partial: only rows with a value) |
 | `ix_outbox_events_pending` | The publisher's poll for due messages (partial: unpublished rows only) |
 | `ix_outbox_events_aggregate_id` | Finding the message for an error event |
+| `ix_error_events_event_timestamp` | Event list across all applications, newest first (`GET /api/v1/logs`) |
+| `ix_error_events_created_at` | Events received in the last hours (`GET /api/v1/logs/activity`) |
 | `ix_incidents_status_severity` | Filtering the incident list |
 | `ix_incidents_last_seen_at` | Ordering the incident list |
 | `ix_incidents_application_id` | Incidents per application |

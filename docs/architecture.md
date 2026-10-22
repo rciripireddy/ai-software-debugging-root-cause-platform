@@ -34,12 +34,12 @@ flowchart LR
 All three schemas live in the same PostgreSQL database (see [database.md](database.md#design-notes)).
 Event flow, contract and guarantees are described in [events.md](events.md).
 
-| Component | Responsibility (target) | Implemented so far (Phase 4) |
+| Component | Responsibility (target) | Implemented so far (Phase 5) |
 | --- | --- | --- |
 | `ingestion-service` | Accept, validate and persist log events; publish them to Kafka | REST API to store and read events, application registration, error fingerprinting, transactional outbox and Kafka publisher, `ingestion` schema migrations |
 | `incident-service` | Group errors into incidents automatically, detect recurring failures | Kafka consumer that correlates events into incidents (idempotent, with retries and a dead-letter topic), REST API to list/filter and retrieve incidents, deprecated manual creation, `incident` schema migrations |
 | `analysis-service` | Analyze incidents and rank likely root causes with supporting evidence | Rule-based analysis API: normalization, Java/Python stack-trace parsing, recurrence and trace-linked errors, related incidents, ranked potential causes with evidence and confidence bands; stores revisions in the `analysis` schema. See [analysis.md](analysis.md) |
-| `frontend` | Dashboard for overview, error monitoring, root cause analysis and service health | Layout and navigation; live service health page; other pages are not connected to the APIs yet |
+| `frontend` | Dashboard for overview, error monitoring, root cause analysis and service health | Six pages on the real APIs: Overview (figures and charts), Error Monitoring, Incidents, incident detail, Root Cause Analysis (run and inspect analyses), Service Health; a demo mode with bundled synthetic data. See [Dashboard](#dashboard) |
 | PostgreSQL | Durable storage, one schema per service | Seven tables across the `ingestion`, `incident` and `analysis` schemas, no foreign keys between them |
 | Kafka | Event stream between ingestion and incident processing | Single-node KRaft broker with `error-events.v1` and its dead-letter topic, 3 partitions each |
 
@@ -108,6 +108,29 @@ analysis-service (Python, FastAPI) is organized the same way:
 - Log messages, stack traces and request bodies are not logged, since they may contain user
   data. Database credentials are never logged. analysis-service writes a stack trace only for
   unexpected errors (`http.unexpected_error`, HTTP 500).
+
+## Dashboard
+
+The React dashboard (`frontend/`) reads the three services through the proxy described below.
+Pages depend on one `DashboardApi` interface with two implementations:
+
+- **Live** (`src/api/httpApi.ts`): typed calls to the REST APIs. Every response is shape-checked;
+  network failures, proxy errors (502–504) and 503 problem details become an "unavailable" error
+  naming the service, other errors show the problem details' title and detail.
+- **Demo** (`src/demo/demoApi.ts`): the same interface over a bundled dataset of real API
+  responses captured from a local run on synthetic data. Selected at build time
+  (`npm run build:demo`); every page then carries a "Demo data" label and a banner, and no API
+  request is made.
+
+Each section of a page loads independently (`useQuery`), so one unavailable service only affects
+the sections that need it, with a Retry button; data already shown stays visible when a refresh
+fails. A rendering error in a page is caught by the router and does not take down the layout.
+
+A few small read endpoints were added for the dashboard, without changing the event flow:
+`GET /api/v1/logs`, `/api/v1/logs/activity` and `/api/v1/applications` (ingestion),
+`GET /api/v1/incidents/stats` and a `q` title search (incident), and
+`GET /api/v1/analysis/incidents` for the analysis state of many incidents in one request
+(analysis). See [api.md](api.md).
 
 ## Request routing
 

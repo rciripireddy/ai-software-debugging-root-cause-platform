@@ -206,6 +206,19 @@ class AnalysisHistory(ApiModel):
     items: list[AnalysisHistoryItem]
 
 
+class LatestAnalysis(AnalysisHistoryItem):
+    """The latest revision of one incident's analysis, without the full result."""
+
+    incident_id: UUID
+    application: str
+    service: str
+    environment: str
+
+
+class LatestAnalyses(ApiModel):
+    items: list[LatestAnalysis]
+
+
 class RelatedIncidents(ApiModel):
     incident_id: UUID
     threshold: int
