@@ -1,9 +1,10 @@
 import { ArrowRight, Inbox, SearchCode } from 'lucide-react'
 import { Link } from 'react-router'
 import { useApi } from '../api/ApiContext'
-import { ConfidenceBadge, IncidentStatusBadge, SeverityBadge } from '../components/Badges'
+import { ConfidenceBadge, SeverityBadge } from '../components/Badges'
 import { BarList, DailyColumns } from '../components/charts'
 import { EmptyState, ErrorState, LoadingState, StaleDataWarning } from '../components/DataState'
+import { IncidentTitle } from '../components/IncidentTitle'
 import { PageHeader } from '../components/PageHeader'
 import { StatCard } from '../components/StatCard'
 import { Timestamp } from '../components/Timestamp'
@@ -21,7 +22,7 @@ export function OverviewPage() {
   const activity = useQuery(`activity:${ACTIVITY_HOURS}`, (signal) => api.eventActivity(ACTIVITY_HOURS, signal), {
     refreshMs,
   })
-  const recent = useQuery('recent-incidents', (signal) => api.listIncidents({ size: 6 }, signal), { refreshMs })
+  const recent = useQuery('recent-incidents', (signal) => api.listIncidents({ size: 5 }, signal), { refreshMs })
   const analyses = useQuery('latest-analyses', (signal) => api.latestAnalyses(undefined, 5, signal), { refreshMs })
 
   const reloadAll = () => {
@@ -41,7 +42,7 @@ export function OverviewPage() {
     <>
       <PageHeader
         title="Operational Overview"
-        description="Incidents, error activity and recent analyses across all monitored applications."
+        description="What is failing right now, where, and what the analyses suggest."
         onRefresh={reloadAll}
         refreshing={refreshing}
         updatedAt={stats.updatedAt}
@@ -68,19 +69,19 @@ export function OverviewPage() {
           label="Fatal incidents"
           value={s?.unresolvedBySeverity.FATAL}
           unavailable={statsFailed}
-          description="Unresolved incidents with FATAL severity"
+          description="Unresolved, fatal severity"
         />
         <StatCard
           label="Services affected"
           value={s?.servicesAffected}
           unavailable={statsFailed}
-          description="Services with at least one unresolved incident"
+          description="With unresolved incidents"
         />
         <StatCard
           label="Errors received (24 h)"
           value={errorsReceived}
           unavailable={activityFailed}
-          description={a ? `ERROR/FATAL of ${formatCount(a.totalEvents)} events received in the last 24 hours` : 'ERROR and FATAL events received'}
+          description={a ? `Of ${formatCount(a.totalEvents)} events received` : 'Error and fatal events'}
         />
       </section>
 
@@ -97,7 +98,7 @@ export function OverviewPage() {
         <section className="card" aria-labelledby="trend-heading">
           <div className="card__header">
             <h2 id="trend-heading">New incidents per day</h2>
-            <span className="muted">Last {TREND_DAYS} days · by first occurrence (UTC)</span>
+            <span className="muted">Last {TREND_DAYS} days (UTC)</span>
           </div>
           {s ? (
             s.newIncidentsPerDay.some((day) => day.count > 0) ? (
@@ -115,8 +116,7 @@ export function OverviewPage() {
         <section className="card" aria-labelledby="services-heading">
           <div className="card__header">
             <h2 id="services-heading">Unresolved incidents by service</h2>
-            <span className="muted">Top {s?.topServices.length ?? ''} services</span>
-          </div>
+                      </div>
           {s ? (
             s.topServices.length > 0 ? (
               <BarList
@@ -149,23 +149,17 @@ export function OverviewPage() {
           </div>
           {recent.data ? (
             recent.data.items.length > 0 ? (
-              <ul className="item-list">
+              <ul className="activity-list">
                 {recent.data.items.map((incident) => (
                   <li key={incident.id}>
-                    <Link to={`/incidents/${incident.id}`} className="item-list__title">
-                      {incident.title}
-                    </Link>
-                    <div className="item-list__meta">
-                      <SeverityBadge severity={incident.severity} />
-                      <IncidentStatusBadge status={incident.status} />
-                      <span>
-                        {incident.application.service} · {incident.application.name} · {incident.application.environment}
-                      </span>
-                      <span>{formatCount(incident.occurrenceCount)}×</span>
-                      <span>
-                        last <Timestamp value={incident.lastSeenAt} />
+                    <div className="activity-list__main">
+                      <IncidentTitle title={incident.title} to={`/incidents/${incident.id}`} showType={false} />
+                      <span className="activity-list__meta">
+                        {incident.application.service} · {incident.application.environment} ·{' '}
+                        {formatCount(incident.occurrenceCount)}× · <Timestamp value={incident.lastSeenAt} />
                       </span>
                     </div>
+                    <SeverityBadge severity={incident.severity} />
                   </li>
                 ))}
               </ul>
@@ -219,24 +213,20 @@ export function OverviewPage() {
         </div>
         {analyses.data ? (
           analyses.data.length > 0 ? (
-            <ul className="item-list">
+            <ul className="activity-list">
               {analyses.data.map((analysis) => (
                 <li key={analysis.incidentId}>
-                  <Link to={`/root-cause/${analysis.incidentId}`} className="item-list__title">
-                    {analysis.primaryTitle ?? 'Analysis without a candidate'}
-                  </Link>
-                  <div className="item-list__meta">
-                    <ConfidenceBadge confidence={analysis.confidence} compact />
-                    <span>{categoryLabel(analysis.primaryCategory)}</span>
-                    {analysis.service && (
-                      <span>
-                        {analysis.service} · {analysis.application} · {analysis.environment}
-                      </span>
-                    )}
-                    <span>
-                      analyzed <Timestamp value={analysis.generatedAt} />
+                  <div className="activity-list__main">
+                    <Link to={`/root-cause/${analysis.incidentId}`} className="activity-list__title">
+                      {analysis.primaryTitle ?? 'Analysis without a candidate'}
+                    </Link>
+                    <span className="activity-list__meta">
+                      {categoryLabel(analysis.primaryCategory)}
+                      {analysis.service && ` · ${analysis.service} · ${analysis.environment}`} · analyzed{' '}
+                      <Timestamp value={analysis.generatedAt} />
                     </span>
                   </div>
+                  <ConfidenceBadge confidence={analysis.confidence} compact />
                 </li>
               ))}
             </ul>

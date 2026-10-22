@@ -11,7 +11,7 @@ ingestion API, correlated by Kafka and analyzed by the analysis service. All eve
 | `error-monitoring.png` | Error Monitoring, filtered, with an expanded event and its stack trace | 1440 px |
 | `incidents.png` | Incidents (application `demo-store`) | 1440 px |
 | `incident-detail.png` | Incident detail with the latest stack trace | 1440 px |
-| `root-cause-analysis.png` | Root Cause Analysis after re-running an analysis | 1440 px |
+| `root-cause-analysis.png` | Root Cause Analysis: the stored analysis of an incident, secondary sections collapsed | 1440 px |
 | `service-health.png` | Service Health | 1440 px |
 | `overview-mobile.png` | Overview | 390 px |
 | `root-cause-analysis-mobile.png` | Root Cause Analysis | 390 px |
@@ -22,7 +22,7 @@ ingestion API, correlated by Kafka and analyzed by the analysis service. All eve
 | `overview-signed-in-mobile.png` | Overview signed in as a VIEWER, navigation menu open | 390 px |
 | `root-cause-analysis-viewer.png` | Root Cause Analysis as a VIEWER: the stored analysis without the run button | 1440 px |
 
-The Phase 6 screenshots were taken the same way on 2026-10-22, signed in with local development
-accounts; they show no passwords or tokens (the password field is empty, and the session cookie is
-not visible to the page). The earlier screenshots predate sign-in and show the sidebar without the
-account area.
+All screenshots were retaken on 2026-10-22 after the dashboard's layout and typography were
+simplified, signed in with local development accounts; they show no passwords or tokens (the
+password field is empty, and the session cookie is not visible to the page). The demo-mode
+screenshot comes from the demo build (`npm run build:demo`) and needs no sign-in.

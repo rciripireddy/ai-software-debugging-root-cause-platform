@@ -5,12 +5,13 @@ import { useApi } from '../api/ApiContext'
 import { ApiError } from '../api/http'
 import { CategoryTag, ConfidenceBadge, IncidentStatusBadge, SeverityBadge } from '../components/Badges'
 import { EmptyState, ErrorState, LoadingState, StaleDataWarning } from '../components/DataState'
+import { Disclosure } from '../components/Disclosure'
 import { EventDetails, Field } from '../components/EventDetails'
 import { PageHeader } from '../components/PageHeader'
 import { Timestamp } from '../components/Timestamp'
 import { config } from '../config'
 import { useQuery } from '../hooks/useQuery'
-import { formatCount, simpleExceptionName } from '../utils/format'
+import { formatCount, simpleExceptionName, splitIncidentTitle } from '../utils/format'
 
 export function IncidentDetailPage() {
   const { incidentId = '' } = useParams()
@@ -50,13 +51,15 @@ export function IncidentDetailPage() {
   const i = incident.data
   const latestAnalysis = analysis.data?.[0]
   const newestEvent = i.recentEvents[0]
+  const { headline, exceptionType } = splitIncidentTitle(i.title)
+  const where = `${i.application.service} · ${i.application.environment} · ${i.application.name}`
 
   return (
     <>
       {back}
       <PageHeader
-        title={i.title}
-        description={`Incident in ${i.application.service} (${i.application.environment}) · ${i.application.name}`}
+        title={headline}
+        description={exceptionType ? `${simpleExceptionName(exceptionType)} in ${where}` : `Incident in ${where}`}
         onRefresh={incident.reload}
         refreshing={incident.refreshing}
         updatedAt={incident.updatedAt}
@@ -78,46 +81,50 @@ export function IncidentDetailPage() {
               <SeverityBadge severity={i.severity} />
             </div>
           </div>
-          <dl className="field-grid">
+          <dl className="key-facts">
             <Field label="Occurrences">{formatCount(i.occurrenceCount)}</Field>
-            <Field label="Application">{i.application.name}</Field>
             <Field label="Service">{i.application.service}</Field>
             <Field label="Environment">{i.application.environment}</Field>
-            <Field label="First seen">
-              <Timestamp value={i.firstSeenAt} format="exact" />
-              <span className="muted">
-                {' '}
-                (<Timestamp value={i.firstSeenAt} />)
-              </span>
-            </Field>
             <Field label="Last seen">
-              <Timestamp value={i.lastSeenAt} format="exact" />
-              <span className="muted">
-                {' '}
-                (<Timestamp value={i.lastSeenAt} />)
-              </span>
-            </Field>
-            <Field label="Fingerprint">
-              <code className="break-all">{i.fingerprint}</code>
-            </Field>
-            <Field label="Incident ID">
-              <code className="break-all">{i.id}</code>
+              <Timestamp value={i.lastSeenAt} />
             </Field>
           </dl>
           {i.summary && <p>{i.summary}</p>}
+          <Disclosure label="Technical details">
+            <dl className="field-grid">
+              <Field label="Application">{i.application.name}</Field>
+              <Field label="First seen">
+                <Timestamp value={i.firstSeenAt} format="exact" />
+              </Field>
+              <Field label="Last seen">
+                <Timestamp value={i.lastSeenAt} format="exact" />
+              </Field>
+              {exceptionType && (
+                <Field label="Exception type">
+                  <code>{exceptionType}</code>
+                </Field>
+              )}
+              <Field label="Fingerprint">
+                <code className="break-all">{i.fingerprint}</code>
+              </Field>
+              <Field label="Incident ID">
+                <code className="break-all">{i.id}</code>
+              </Field>
+            </dl>
+          </Disclosure>
         </section>
 
         <section className="card" aria-labelledby="analysis-state-heading">
-          <h2 id="analysis-state-heading">Analysis</h2>
+          <h2 id="analysis-state-heading">Likely root cause</h2>
           {latestAnalysis ? (
             <>
+              <p className="root-cause-card__title">{latestAnalysis.primaryTitle ?? 'No candidate identified'}</p>
               <div className="badge-row">
                 <ConfidenceBadge confidence={latestAnalysis.confidence} />
                 <CategoryTag category={latestAnalysis.primaryCategory} />
               </div>
-              <p>{latestAnalysis.primaryTitle}</p>
-              <p className="muted">
-                Revision {latestAnalysis.revision} · analyzed <Timestamp value={latestAnalysis.generatedAt} />
+              <p className="muted small">
+                Analyzed <Timestamp value={latestAnalysis.generatedAt} />
               </p>
               <Link to={`/root-cause/${i.id}`} className="text-link">
                 View evidence and related incidents
@@ -158,7 +165,7 @@ export function IncidentDetailPage() {
           </span>
         </div>
         <div className="table-wrapper" tabIndex={0} aria-label="Incident events table, scrolls horizontally">
-          <table className="data-table">
+          <table className="data-table data-table--cards">
             <thead>
               <tr>
                 <th scope="col">
@@ -168,8 +175,6 @@ export function IncidentDetailPage() {
                 <th scope="col">Severity</th>
                 <th scope="col">Error</th>
                 <th scope="col">Host</th>
-                <th scope="col">Trace ID</th>
-                <th scope="col">Correlation ID</th>
               </tr>
             </thead>
             <tbody>
@@ -178,7 +183,7 @@ export function IncidentDetailPage() {
                 return (
                   <Fragment key={event.id}>
                     <tr className={open ? 'is-expanded' : undefined}>
-                      <td>
+                      <td className="cell-toggle">
                         <button
                           type="button"
                           className="icon-button icon-button--small"
@@ -189,29 +194,27 @@ export function IncidentDetailPage() {
                           {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                         </button>
                       </td>
-                      <td className="nowrap">
+                      <td className="nowrap" data-label="Occurred">
                         <Timestamp value={event.timestamp} format="exact" />
                       </td>
-                      <td>
+                      <td className="cell-badge">
                         <SeverityBadge severity={event.severity} />
                       </td>
-                      <td className="cell-message">
+                      <td className="cell-message cell-primary">
                         <div className="cell-stack">
-                          {event.exceptionType && (
-                            <code title={event.exceptionType}>{simpleExceptionName(event.exceptionType)}</code>
-                          )}
                           <span>{event.message}</span>
+                          {event.exceptionType && (
+                            <code className="cell-type" title={event.exceptionType}>
+                              {simpleExceptionName(event.exceptionType)}
+                            </code>
+                          )}
                         </div>
                       </td>
-                      <td>{event.host ?? <span className="muted">—</span>}</td>
-                      <td>{event.traceId ? <code>{event.traceId}</code> : <span className="muted">—</span>}</td>
-                      <td>
-                        {event.correlationId ? <code>{event.correlationId}</code> : <span className="muted">—</span>}
-                      </td>
+                      <td data-label="Host">{event.host ?? <span className="muted">—</span>}</td>
                     </tr>
                     {open && (
                       <tr className="detail-row">
-                        <td colSpan={7}>
+                        <td colSpan={5}>
                           <EventDetails eventId={event.id} />
                         </td>
                       </tr>
@@ -222,9 +225,7 @@ export function IncidentDetailPage() {
             </tbody>
           </table>
         </div>
-        <p className="muted small">
-          Source and stack trace are read from the ingestion service; expand an event to see them.
-        </p>
+        <p className="muted small">Expand an event to see its stack trace, trace ID and correlation ID.</p>
       </section>
     </>
   )

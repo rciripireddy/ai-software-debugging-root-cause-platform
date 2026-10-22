@@ -6,7 +6,7 @@ import { eventSummary, page } from '../test/fixtures'
 import { renderRoute } from '../test/renderRoute'
 
 describe('ErrorMonitoringPage', () => {
-  it('lists events with their service, severity, exception, fingerprint and trace ID', async () => {
+  it('lists events with their service, severity, exception and message', async () => {
     renderRoute('/errors')
 
     const table = await screen.findByRole('table')
@@ -16,8 +16,9 @@ describe('ErrorMonitoringPage', () => {
     expect(row).toHaveTextContent('Error')
     expect(row).toHaveTextContent('SocketTimeoutException')
     expect(row).toHaveTextContent('Payment authorization failed')
-    expect(row).toHaveTextContent('9910dd1f3cee')
-    expect(row).toHaveTextContent('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')
+    // Identifiers are kept out of the table and shown with the event's details.
+    expect(row).not.toHaveTextContent('9910dd1f3cee')
+    expect(row).not.toHaveTextContent('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')
     expect(screen.getByRole('navigation', { name: 'events pages' })).toHaveTextContent('1 events · page 1 of 1')
   })
 
@@ -43,7 +44,7 @@ describe('ErrorMonitoringPage', () => {
     )
   })
 
-  it('shows the stack trace and source of an event on request', async () => {
+  it('shows the stack trace and source of an event on request, with its IDs under technical details', async () => {
     const user = userEvent.setup()
     const { api } = renderRoute('/errors')
 
@@ -52,6 +53,14 @@ describe('ErrorMonitoringPage', () => {
     expect(api.getEvent).toHaveBeenCalledWith('evt-1', expect.anything())
     expect(await screen.findByRole('figure')).toHaveTextContent('GatewayClient.authorize(GatewayClient.java:74)')
     expect(screen.getByText('com.shop.payment.GatewayClient')).toBeInTheDocument()
+
+    const technical = screen.getByText('Technical details').closest('details')!
+    expect(technical).not.toHaveAttribute('open')
+    expect(within(technical).getByText('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')).not.toBeVisible()
+    await user.click(screen.getByText('Technical details'))
+    expect(technical).toHaveAttribute('open')
+    expect(within(technical).getByText('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')).toBeVisible()
+    expect(technical).toHaveTextContent('9910dd1f3cee53f5cd2fb547aac790bfad744ca3f8ccbfde75a98d60a20af30c')
   })
 
   it('moves between pages', async () => {

@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { useApi } from '../api/ApiContext'
 import { ConfidenceBadge, IncidentStatusBadge, SeverityBadge } from '../components/Badges'
 import { EmptyState, ErrorState, LoadingState, StaleDataWarning } from '../components/DataState'
+import { IncidentTitle } from '../components/IncidentTitle'
 import { ClearFilters, SearchFilter, SelectFilter } from '../components/Filters'
 import { PageHeader } from '../components/PageHeader'
 import { Pagination } from '../components/Pagination'
@@ -11,7 +12,7 @@ import { config } from '../config'
 import { useQuery } from '../hooks/useQuery'
 import { useUrlFilters } from '../hooks/useUrlFilters'
 import { INCIDENT_STATUSES, SEVERITIES, type IncidentStatus, type Severity } from '../types/api'
-import { categoryLabel, formatCount, SEVERITY_LABELS, shortFingerprint, STATUS_LABELS } from '../utils/format'
+import { categoryLabel, formatCount, SEVERITY_LABELS, STATUS_LABELS } from '../utils/format'
 import { distinctOptions } from '../utils/options'
 
 const PAGE_SIZE = 20
@@ -47,7 +48,7 @@ export function IncidentsPage() {
     <>
       <PageHeader
         title="Incidents"
-        description="Recurring errors grouped automatically by application and fingerprint, most recent activity first."
+        description="Recurring errors grouped automatically, most recent activity first."
         onRefresh={() => {
           incidents.reload()
           analyses.reload()
@@ -133,17 +134,16 @@ export function IncidentsPage() {
               </p>
             )}
             <div className="table-wrapper" tabIndex={0} aria-label="Incidents table, scrolls horizontally">
-              <table className="data-table">
+              <table className="data-table data-table--cards">
                 <thead>
                   <tr>
                     <th scope="col">Incident</th>
-                    <th scope="col">Status</th>
                     <th scope="col">Severity</th>
+                    <th scope="col">Status</th>
                     <th scope="col">Service</th>
                     <th scope="col" className="numeric">
                       Occurrences
                     </th>
-                    <th scope="col">First seen</th>
                     <th scope="col">Last seen</th>
                     <th scope="col">Analysis</th>
                   </tr>
@@ -153,23 +153,16 @@ export function IncidentsPage() {
                     const analysis = analysisByIncident.get(incident.id)
                     return (
                       <tr key={incident.id}>
-                        <td className="cell-message">
-                          <div className="cell-stack">
-                            <Link to={`/incidents/${incident.id}`} className="table-link">
-                              {incident.title}
-                            </Link>
-                            <code className="muted" title={incident.fingerprint}>
-                              {shortFingerprint(incident.fingerprint)}
-                            </code>
-                          </div>
+                        <td className="cell-message cell-primary">
+                          <IncidentTitle title={incident.title} to={`/incidents/${incident.id}`} />
                         </td>
-                        <td>
-                          <IncidentStatusBadge status={incident.status} />
-                        </td>
-                        <td>
+                        <td className="cell-badge">
                           <SeverityBadge severity={incident.severity} />
                         </td>
-                        <td>
+                        <td className="cell-badge">
+                          <IncidentStatusBadge status={incident.status} />
+                        </td>
+                        <td data-label="Service">
                           <div className="cell-stack">
                             <span>{incident.application.service}</span>
                             <span className="muted">
@@ -177,14 +170,13 @@ export function IncidentsPage() {
                             </span>
                           </div>
                         </td>
-                        <td className="numeric">{formatCount(incident.occurrenceCount)}</td>
-                        <td className="nowrap">
-                          <Timestamp value={incident.firstSeenAt} />
+                        <td className="numeric" data-label="Occurrences">
+                          {formatCount(incident.occurrenceCount)}
                         </td>
-                        <td className="nowrap">
+                        <td className="nowrap" data-label="Last seen">
                           <Timestamp value={incident.lastSeenAt} />
                         </td>
-                        <td>
+                        <td data-label="Analysis">
                           {analysis ? (
                             <Link to={`/root-cause/${incident.id}`} className="cell-stack table-link">
                               <ConfidenceBadge confidence={analysis.confidence} compact />

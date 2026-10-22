@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, CircleHelp, Loader2, Server, XCircle } from 'lucide-react'
+import { CheckCircle2, CircleAlert, CircleHelp, Loader2, XCircle } from 'lucide-react'
 import { useApi } from '../api/ApiContext'
 import { Notice } from '../components/Notice'
 import { PageHeader } from '../components/PageHeader'
@@ -41,7 +41,7 @@ export function ServiceHealthPage() {
     <>
       <PageHeader
         title="Service Health"
-        description="Health checks against the platform's backend services."
+        description="Is each backend service up, and how quickly does it answer?"
         onRefresh={() => void refresh()}
         refreshing={isRefreshing}
       />
@@ -53,8 +53,8 @@ export function ServiceHealthPage() {
         </Notice>
       ) : (
         <Notice>
-          Checks run in your browser every {config.refresh.health / 1000} seconds through the dashboard's API proxy.
-          PostgreSQL and Kafka are monitored by Docker Compose health checks and are not exposed to the browser.
+          Checked from your browser every {config.refresh.health / 1000} seconds. PostgreSQL and Kafka are checked by
+          Docker Compose and are not shown here.
         </Notice>
       )}
 
@@ -75,30 +75,17 @@ export function ServiceHealthPage() {
           return (
             <article key={service.id} className="card service-card" aria-label={service.name}>
               <div className="service-card__header">
-                <span className="service-card__icon" aria-hidden="true">
-                  <Server size={18} />
-                </span>
                 <div>
                   <h2>{service.name}</h2>
                   <p className="muted">{service.runtime}</p>
                 </div>
                 <StatusPill result={result} />
               </div>
-              <p>{service.description}</p>
-              <dl className="detail-list">
-                <div>
-                  <dt>Endpoint</dt>
-                  <dd>
-                    <code>{service.healthPath}</code>
-                  </dd>
-                </div>
+              <p className="muted">{service.description}</p>
+              <dl className="service-card__figures">
                 <div>
                   <dt>Response time</dt>
                   <dd>{result?.latencyMs !== undefined ? `${result.latencyMs} ms` : '—'}</dd>
-                </div>
-                <div>
-                  <dt>HTTP status</dt>
-                  <dd>{result?.httpStatus ?? '—'}</dd>
                 </div>
                 <div>
                   <dt>Last checked</dt>
@@ -113,6 +100,10 @@ export function ServiceHealthPage() {
                   </dd>
                 </div>
               </dl>
+              <p className="service-card__endpoint">
+                <code>{service.healthPath}</code>
+                {result?.httpStatus !== undefined && <span>HTTP {result.httpStatus}</span>}
+              </p>
               {result?.error && <p className="service-card__error">{result.error}</p>}
             </article>
           )

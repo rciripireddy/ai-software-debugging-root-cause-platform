@@ -11,12 +11,30 @@ and can also run as a self-contained demo with bundled synthetic data.
 | `/login` | Sign-in: username and password, field validation, progress and error states; returns to the page in `?next=` | `POST /api/v1/auth/login` |
 | `/` | Overview: key figures, new incidents per day, unresolved incidents by service, errors received by service, recent incidents, latest analyses | incident stats, event activity, incident list, latest analyses |
 | `/errors` | Error Monitoring: events newest first; filters for text, application, service, environment, severity; expandable details with stack trace | `GET /api/v1/logs`, `GET /api/v1/logs/{id}` |
-| `/incidents` | Incidents: filters for text, status, severity, application, service, environment; analysis state per incident | `GET /api/v1/incidents`, latest analyses |
-| `/incidents/:id` | Incident detail: summary, most recent occurrence with stack trace, recent events (expand for source and stack trace) | incident, event details |
-| `/root-cause`, `/root-cause/:id` | Root Cause Analysis: incident picker; stored analysis or "Run analysis" (`ADMIN` only); primary and other candidates with evidence, confidence and limitations; related incidents; patterns; history | analysis API |
+| `/incidents` | Incidents: severity, status, service, occurrences, last seen and analysis state; filters for text, status, severity, application, service, environment | `GET /api/v1/incidents`, latest analyses |
+| `/incidents/:id` | Incident detail: key facts, likely root cause, most recent occurrence with stack trace, recent events (expand for source and stack trace) | incident, event details |
+| `/root-cause`, `/root-cause/:id` | Root Cause Analysis: incident picker; stored analysis or "Run analysis" (`ADMIN` only); likely cause with confidence, explanation, key evidence and limitations first; related incidents; other candidates; collapsed patterns, analysis details and history | analysis API |
 | `/health` | Service Health: live checks of the three services every 15 s | health endpoints |
 
 Filters and the page number are kept in the URL, so filtered views can be bookmarked.
+
+### Presentation
+
+Pages lead with what a reader needs first (titles, severity and status, service, counts, the
+likely cause and its confidence, key evidence) and keep secondary detail available but collapsed:
+
+- `Disclosure` (`src/components/Disclosure.tsx`) is an inline "Technical details" or "more"
+  section for IDs, fingerprints, trace and correlation IDs, exact timestamps, the remaining
+  evidence and the confidence calculation.
+- `CollapsibleCard` is a card that starts closed with a one-line hint (patterns, analysis details,
+  history).
+- `IncidentTitle` shows `<exception type>: <message>` titles as the message with the short
+  exception name beneath it (`splitIncidentTitle` in `src/utils/format.ts`); the full title is the
+  hover text.
+
+Both collapsible components are native `<details>` elements, so they work with the keyboard and
+screen readers and keep their content in the page. Below 720 px, tables marked `data-table--cards`
+(incidents and events) show each row as a card with labelled values.
 
 ## Signing in
 

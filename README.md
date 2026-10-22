@@ -306,11 +306,16 @@ a note, and analysis-service refuses the request anyway); an `ADMIN` can.
 | Page | What it shows |
 | --- | --- |
 | **Overview** | Unresolved, total and fatal incidents, services affected, errors received in the last 24 h; new incidents per day, unresolved incidents by service, errors by service; recent incident activity and latest analyses. Refreshes every 30 s |
-| **Error Monitoring** | Events newest first with severity, service, exception, message, fingerprint and trace/correlation IDs; filters for text, application, service, environment and severity; expand an event for its source and stack trace |
-| **Incidents** | Incidents with status, severity, service, occurrences, first/last seen, fingerprint and analysis state; filters for text, status, severity, application, service and environment |
-| **Incident detail** | Summary, the most recent occurrence with its stack trace, and the recent events (expand for source and stack trace) |
-| **Root Cause Analysis** | Pick an incident, see its stored analysis or run one: the primary candidate ("Most likely cause based on available evidence" only for `HIGH`, otherwise "Potential root cause") with category, confidence band, affected component, explanation and evidence; the point calculation on request; limitations; other candidates; related incidents with score and matching signals; trace-linked errors; revision history |
-| **Service Health** | Live checks of the three services every 15 s with status, response time, endpoint and last check |
+| **Error Monitoring** | Events newest first with time, severity, service and message; filters for text, application, service, environment and severity; expand an event for its source, host and stack trace, with trace/correlation IDs and fingerprint under *Technical details* |
+| **Incidents** | Incidents with severity, status, service, occurrences, last activity and analysis state; filters for text, status, severity, application, service and environment |
+| **Incident detail** | Key facts (occurrences, service, environment, last seen), the likely root cause, the most recent occurrence with its stack trace, and the recent events; fingerprint, IDs and exact first/last times under *Technical details* |
+| **Root Cause Analysis** | Pick an incident, see its stored analysis or run one. First the likely cause ("Most likely cause based on available evidence" only for `HIGH`, otherwise "Potential root cause") with confidence band, category, explanation, the three strongest evidence signals and its limitations; then related incidents, other candidates and the limitations of the analysis. The remaining evidence, the point calculation, the affected code location, matching signals, patterns, revision details and history are collapsed |
+| **Service Health** | Live checks of the three services every 15 s with status, response time and last check |
+
+Each page shows the essentials first; long identifiers and secondary metadata stay one click away
+in collapsed sections rather than being removed. Incident titles (`<exception type>: <message>`)
+are shown as the message with the short exception name beneath it; the full title is in the hover
+text. On phones, incident and event tables become one card per row.
 
 Filters and page numbers are part of the URL. Each section loads on its own, so an unavailable
 service shows a clear message with a Retry button in the sections that need it while the rest of

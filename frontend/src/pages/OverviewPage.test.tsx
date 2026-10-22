@@ -30,7 +30,7 @@ describe('OverviewPage', () => {
   it('lists recent incidents and the latest analyses with links', async () => {
     renderRoute('/')
 
-    const recent = await screen.findByRole('link', { name: 'java.net.SocketTimeoutException: Payment authorization failed' })
+    const recent = await screen.findByRole('link', { name: 'Payment authorization failed' })
     expect(recent).toHaveAttribute('href', expect.stringMatching(/^\/incidents\//))
     const analysisLink = await screen.findByRole('link', { name: /Timeout waiting for a downstream dependency/ })
     expect(analysisLink).toHaveAttribute('href', expect.stringMatching(/^\/root-cause\//))

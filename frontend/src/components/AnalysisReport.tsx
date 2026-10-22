@@ -5,6 +5,7 @@ import {
   Code2,
   FileCode,
   GitBranch,
+  Info,
   Link2,
   MessageSquareText,
   Server,
@@ -16,8 +17,13 @@ import type { Candidate, Evidence, IncidentAnalysis, LinkedIncident, RelatedInci
 import { candidateLead, formatCount } from '../utils/format'
 import { formatDuration } from '../utils/time'
 import { CategoryTag, ConfidenceBadge } from './Badges'
+import { CollapsibleCard, Disclosure } from './Disclosure'
 import { Field } from './EventDetails'
+import { IncidentTitle } from './IncidentTitle'
 import { Timestamp } from './Timestamp'
+
+/** Evidence items shown before "more evidence"; the rules list the strongest signals first. */
+const KEY_EVIDENCE = 3
 
 const SIGNAL_INFO: Record<string, { label: string; icon: LucideIcon }> = {
   EXCEPTION_TYPE: { label: 'Exception type', icon: AlertTriangle },
@@ -40,7 +46,7 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
         const Icon = info.icon
         return (
           <li key={`${item.signal}-${index}`}>
-            <Icon size={16} aria-hidden="true" />
+            <Icon size={18} aria-hidden="true" />
             <div>
               <span className="evidence-list__signal">{info.label}</span>
               <span>{item.description}</span>
@@ -52,11 +58,26 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
   )
 }
 
+/** The strongest evidence, with the rest one click away. */
+function KeyEvidence({ evidence }: { evidence: Evidence[] }) {
+  const rest = evidence.slice(KEY_EVIDENCE)
+  return (
+    <>
+      <EvidenceList evidence={evidence.slice(0, KEY_EVIDENCE)} />
+      {rest.length > 0 && (
+        <Disclosure label={`${rest.length} more evidence signal${rest.length === 1 ? '' : 's'}`}>
+          <EvidenceList evidence={rest} />
+        </Disclosure>
+      )}
+    </>
+  )
+}
+
 function Limitations({ items, title = 'Limitations' }: { items: string[]; title?: string }) {
   if (items.length === 0) return null
   return (
     <div className="limitations">
-      <h4>{title}</h4>
+      <h3>{title}</h3>
       <ul>
         {items.map((item) => (
           <li key={item}>{item}</li>
@@ -68,61 +89,83 @@ function Limitations({ items, title = 'Limitations' }: { items: string[]; title?
 
 function ConfidenceDetails({ candidate }: { candidate: Candidate }) {
   return (
-    <details className="confidence-details">
+    <details className="disclosure confidence-details">
       <summary>
         How this confidence was calculated ({candidate.score} of {candidate.maxScore} points)
       </summary>
-      <ul>
-        {candidate.confidenceBasis.map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
-      <p className="muted small">
-        Points come from documented rules (5–6 = HIGH, 3–4 = MEDIUM, 0–2 = LOW) and are capped when evidence is
-        incomplete. They are not probabilities.
-      </p>
+      <div className="disclosure__body">
+        <ul>
+          {candidate.confidenceBasis.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+        <p className="muted small">
+          Points come from documented rules (5–6 = HIGH, 3–4 = MEDIUM, 0–2 = LOW) and are capped when evidence is
+          incomplete. They are not probabilities.
+        </p>
+      </div>
     </details>
   )
 }
 
-export function PrimaryCandidate({ candidate }: { candidate: Candidate }) {
+/** The leading candidate: cause, confidence, explanation, key evidence and limitations first. */
+export function PrimaryCandidate({ candidate, analysis }: { candidate: Candidate; analysis: IncidentAnalysis }) {
   const component = candidate.affectedComponent
+  const coverage = analysis.dataCoverage
   return (
     <article className="card candidate candidate--primary" aria-labelledby="primary-candidate-title">
-      <p className="candidate__lead">{candidateLead(candidate.confidence)}</p>
-      <h2 id="primary-candidate-title" className="candidate__title">
-        {candidate.title}
-      </h2>
-      <div className="badge-row">
-        <ConfidenceBadge confidence={candidate.confidence} />
-        <CategoryTag category={candidate.category} />
+      <div className="candidate__heading">
+        <p className="candidate__lead">{candidateLead(candidate.confidence)}</p>
+        <h2 id="primary-candidate-title" className="candidate__title">
+          {candidate.title}
+        </h2>
+        <div className="badge-row">
+          <ConfidenceBadge confidence={candidate.confidence} />
+          <CategoryTag category={candidate.category} />
+        </div>
       </div>
-      <dl className="field-grid">
-        <Field label="Affected service">
-          {component.service} · {component.environment}
-        </Field>
-        <Field label="Code location">{component.location ? <code>{component.location}</code> : '—'}</Field>
-        {component.source && (
-          <Field label="Source">
-            <code>{component.source}</code>
-          </Field>
-        )}
-      </dl>
-      <p>{candidate.explanation}</p>
-      <ConfidenceDetails candidate={candidate} />
-      <h3>Evidence</h3>
-      <EvidenceList evidence={candidate.evidence} />
-      {candidate.relatedIncidentIds.length > 0 && (
-        <p className="small">
-          Related incident{candidate.relatedIncidentIds.length > 1 ? 's' : ''}:{' '}
-          {candidate.relatedIncidentIds.map((id) => (
-            <Link key={id} to={`/root-cause/${id}`} className="text-link">
-              {id.slice(0, 8)}
-            </Link>
-          ))}
-        </p>
-      )}
+      <p className="candidate__explanation">{candidate.explanation}</p>
+      <div className="candidate__section">
+        <h3>Key evidence</h3>
+        <KeyEvidence evidence={candidate.evidence} />
+      </div>
       <Limitations items={candidate.limitations} />
+      <div className="candidate__more">
+        <ConfidenceDetails candidate={candidate} />
+        <Disclosure label="Technical details">
+          <dl className="field-grid">
+            <Field label="Affected service">
+              {component.service} · {component.environment}
+            </Field>
+            <Field label="Code location">{component.location ? <code>{component.location}</code> : '—'}</Field>
+            {component.source && (
+              <Field label="Source">
+                <code>{component.source}</code>
+              </Field>
+            )}
+            {candidate.relatedIncidentIds.length > 0 && (
+              <Field label="Related incident IDs">
+                {candidate.relatedIncidentIds.map((id) => (
+                  <Link key={id} to={`/root-cause/${id}`} className="text-link related-id">
+                    <code>{id.slice(0, 8)}</code>
+                  </Link>
+                ))}
+              </Field>
+            )}
+          </dl>
+        </Disclosure>
+      </div>
+      <footer className="candidate__footer">
+        <p className="disclaimer">
+          <Info size={14} aria-hidden="true" />
+          Suggestions come from documented rules applied to the error events. They are hypotheses supported by the
+          evidence shown, not confirmed root causes.
+        </p>
+        <p className="muted small">
+          Based on {formatCount(coverage.eventsAnalyzed)} of {formatCount(coverage.occurrenceCount)} events · analyzed{' '}
+          <Timestamp value={analysis.generatedAt} />
+        </p>
+      </footer>
     </article>
   )
 }
@@ -131,24 +174,28 @@ export function OtherCandidates({ candidates }: { candidates: Candidate[] }) {
   if (candidates.length === 0) return null
   return (
     <section className="card" aria-labelledby="other-candidates-heading">
-      <h2 id="other-candidates-heading">Other candidates</h2>
-      <p className="muted small">Weaker explanations that the evidence also partly supports.</p>
-      {candidates.map((candidate) => (
-        <details key={candidate.rank} className="candidate-summary">
-          <summary>
-            <span className="candidate-summary__rank">#{candidate.rank}</span>
-            <span className="candidate-summary__title">{candidate.title}</span>
-            <ConfidenceBadge confidence={candidate.confidence} compact />
-          </summary>
-          <div className="candidate-summary__body">
-            <CategoryTag category={candidate.category} />
-            <p>{candidate.explanation}</p>
-            <ConfidenceDetails candidate={candidate} />
-            <EvidenceList evidence={candidate.evidence} />
-            <Limitations items={candidate.limitations} />
-          </div>
-        </details>
-      ))}
+      <div className="card__header">
+        <h2 id="other-candidates-heading">Other candidates</h2>
+        <span className="muted">Weaker explanations the evidence partly supports</span>
+      </div>
+      <div className="candidate-summaries">
+        {candidates.map((candidate) => (
+          <details key={candidate.rank} className="candidate-summary">
+            <summary>
+              <span className="candidate-summary__rank">#{candidate.rank}</span>
+              <span className="candidate-summary__title">{candidate.title}</span>
+              <ConfidenceBadge confidence={candidate.confidence} compact />
+            </summary>
+            <div className="candidate-summary__body">
+              <CategoryTag category={candidate.category} />
+              <p>{candidate.explanation}</p>
+              <EvidenceList evidence={candidate.evidence} />
+              <Limitations items={candidate.limitations} />
+              <ConfidenceDetails candidate={candidate} />
+            </div>
+          </details>
+        ))}
+      </div>
     </section>
   )
 }
@@ -156,14 +203,12 @@ export function OtherCandidates({ candidates }: { candidates: Candidate[] }) {
 function LinkedList({ title, items, direction }: { title: string; items: LinkedIncident[]; direction: 'before' | 'after' }) {
   if (items.length === 0) return null
   return (
-    <div>
+    <div className="patterns__linked">
       <h3>{title}</h3>
       <ul className="item-list">
         {items.map((item) => (
           <li key={item.incidentId}>
-            <Link to={`/root-cause/${item.incidentId}`} className="item-list__title">
-              {item.title}
-            </Link>
+            <IncidentTitle title={item.title} to={`/root-cause/${item.incidentId}`} showType={false} />
             <div className="item-list__meta">
               <span>{item.service}</span>
               <span>
@@ -185,9 +230,13 @@ function LinkedList({ title, items, direction }: { title: string; items: LinkedI
 export function Patterns({ analysis }: { analysis: IncidentAnalysis }) {
   const p = analysis.patterns
   const r = p.recurrence
+  const linked = p.precedingErrors.length + p.subsequentErrors.length
   return (
-    <section className="card" aria-labelledby="patterns-heading">
-      <h2 id="patterns-heading">Patterns</h2>
+    <CollapsibleCard
+      id="patterns-heading"
+      title="Patterns"
+      hint={`${r.description.replace(/\.$/, '')}${linked > 0 ? ` · ${linked} linked error${linked === 1 ? '' : 's'} nearby` : ''}`}
+    >
       <dl className="field-grid">
         <Field label="Recurrence">
           <span className="tag">{r.pattern}</span> {r.description}
@@ -216,7 +265,7 @@ export function Patterns({ analysis }: { analysis: IncidentAnalysis }) {
       </dl>
       <LinkedList title="Errors that preceded this incident" items={p.precedingErrors} direction="before" />
       <LinkedList title="Errors that followed this incident" items={p.subsequentErrors} direction="after" />
-    </section>
+    </CollapsibleCard>
   )
 }
 
@@ -237,9 +286,7 @@ export function RelatedIncidents({ items, compared }: { items: RelatedIncident[]
           {items.map((item) => (
             <li key={item.incidentId}>
               <div className="related-list__header">
-                <Link to={`/root-cause/${item.incidentId}`} className="item-list__title">
-                  {item.title}
-                </Link>
+                <IncidentTitle title={item.title} to={`/root-cause/${item.incidentId}`} />
                 <span className="related-list__score" title="Similarity score out of 100">
                   <span className="score-bar" aria-hidden="true">
                     <span style={{ width: `${item.score}%` }} />
@@ -250,14 +297,18 @@ export function RelatedIncidents({ items, compared }: { items: RelatedIncident[]
               <p className="muted small">
                 {item.service} · {item.environment} · {item.status.toLowerCase()}
               </p>
-              <ul className="signal-list" aria-label="Matching signals">
-                {item.matchingSignals.map((signal) => (
-                  <li key={signal.signal}>
-                    <span className="signal-list__points">+{signal.points}</span>
-                    {signal.description}
-                  </li>
-                ))}
-              </ul>
+              <Disclosure
+                label={`Why it is related (${item.matchingSignals.length} matching signal${item.matchingSignals.length === 1 ? '' : 's'})`}
+              >
+                <ul className="signal-list" aria-label="Matching signals">
+                  {item.matchingSignals.map((signal) => (
+                    <li key={signal.signal}>
+                      <span className="signal-list__points">+{signal.points}</span>
+                      {signal.description}
+                    </li>
+                  ))}
+                </ul>
+              </Disclosure>
             </li>
           ))}
         </ul>
@@ -266,23 +317,42 @@ export function RelatedIncidents({ items, compared }: { items: RelatedIncident[]
   )
 }
 
-export function AnalysisMeta({ analysis }: { analysis: IncidentAnalysis }) {
+/** Revision, rule version and data coverage: useful for auditing, secondary for reading. */
+export function AnalysisDetails({ analysis }: { analysis: IncidentAnalysis }) {
   const c = analysis.dataCoverage
   return (
-    <p className="muted small">
-      Revision {analysis.revision} · rules v{analysis.analysisVersion} · generated{' '}
-      <Timestamp value={analysis.generatedAt} /> · {formatCount(c.eventsAnalyzed)} of {formatCount(c.occurrenceCount)}{' '}
-      events analyzed, {formatCount(c.eventsWithStackTrace)} with stack traces · {formatCount(c.incidentsCompared)}{' '}
-      incidents compared
-    </p>
+    <CollapsibleCard
+      id="analysis-details-heading"
+      title="Analysis details"
+      hint={`Revision ${analysis.revision} · rules v${analysis.analysisVersion}`}
+    >
+      <p>{analysis.summary}</p>
+      <dl className="field-grid">
+        <Field label="Revision">{analysis.revision}</Field>
+        <Field label="Rules version">v{analysis.analysisVersion}</Field>
+        <Field label="Generated">
+          <Timestamp value={analysis.generatedAt} format="exact" />
+        </Field>
+        <Field label="Events analyzed">
+          {formatCount(c.eventsAnalyzed)} of {formatCount(c.occurrenceCount)}
+        </Field>
+        <Field label="With stack traces">{formatCount(c.eventsWithStackTrace)}</Field>
+        <Field label="Incidents compared">{formatCount(c.incidentsCompared)}</Field>
+      </dl>
+    </CollapsibleCard>
   )
 }
 
 export function ReportLimitations({ analysis }: { analysis: IncidentAnalysis }) {
+  if (analysis.limitations.length === 0) return null
   return (
     <section className="card" aria-labelledby="report-limitations-heading">
       <h2 id="report-limitations-heading">Limitations of this analysis</h2>
-      <Limitations items={analysis.limitations} title="What the analysis could not see" />
+      <ul className="plain-list">
+        {analysis.limitations.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
     </section>
   )
 }

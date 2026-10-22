@@ -15,9 +15,14 @@ describe('IncidentDetailPage', () => {
     expect(summary).toHaveTextContent('Occurrences4')
     expect(summary).toHaveTextContent('Servicepayment-service')
     expect(summary).toHaveTextContent('Environmentstaging')
-    expect(summary).toHaveTextContent('9910dd1f3cee53f5cd2fb547aac790bfad744ca3f8ccbfde75a98d60a20af30c')
     expect(within(summary).getByText('Open')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Payment authorization failed')
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Payment authorization failed/)
+    expect(screen.getByText(/^SocketTimeoutException in payment-service · staging/)).toBeInTheDocument()
+    // Fingerprint and ID stay available, collapsed under technical details.
+    const technical = within(summary).getByText('Technical details').closest('details')!
+    expect(technical).not.toHaveAttribute('open')
+    expect(technical).toHaveTextContent('9910dd1f3cee53f5cd2fb547aac790bfad744ca3f8ccbfde75a98d60a20af30c')
+    expect(technical).toHaveTextContent('java.net.SocketTimeoutException')
   })
 
   it('shows the most recent event with source and a readable stack trace', async () => {
@@ -33,15 +38,20 @@ describe('IncidentDetailPage', () => {
     expect(screen.getByText('com.shop.payment.GatewayClient')).toBeInTheDocument()
   })
 
-  it('lists the recent events with host, trace and correlation IDs', async () => {
-    renderRoute(path)
+  it('lists the recent events with host, and shows their trace and correlation IDs when expanded', async () => {
+    const user = userEvent.setup()
+    renderRoute(path, createFakeApi({ getEvent: vi.fn(async () => eventDetail({ correlationId: 'order-1001' })) }))
 
     const table = (await screen.findByRole('heading', { name: 'Error events' })).closest('section')!
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(3)
     expect(rows[1]).toHaveTextContent('payment-7c9d4-abcde')
-    expect(rows[1]).toHaveTextContent('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')
-    expect(rows[1]).toHaveTextContent('order-1001')
+    expect(rows[1]).not.toHaveTextContent('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')
+
+    await user.click(within(rows[1]).getByRole('button', { name: 'Show event details' }))
+    const detail = within(table).getAllByRole('row')[2]
+    expect(await within(detail).findByText('8c5d2f4b0e6a7b12d4f5a6b7c8d9e0f1')).toBeInTheDocument()
+    expect(within(detail).getByText('order-1001')).toBeInTheDocument()
   })
 
   it('shows the analysis state and links to root cause analysis', async () => {

@@ -18,15 +18,17 @@ const twoIncidents = page([
 ])
 
 describe('IncidentsPage', () => {
-  it('lists incidents with status, severity, service, counts, times, fingerprint and analysis state', async () => {
+  it('lists incidents with status, severity, service, count, last activity and analysis state', async () => {
     renderRoute('/incidents', createFakeApi({ listIncidents: vi.fn(async () => twoIncidents) }))
 
     const rows = within(await screen.findByRole('table')).getAllByRole('row')
     expect(rows).toHaveLength(3)
-    expect(rows[1]).toHaveTextContent('Payment authorization failed')
+    expect(within(rows[1]).getByRole('link', { name: 'Payment authorization failed' })).toBeInTheDocument()
+    expect(rows[1]).toHaveTextContent('SocketTimeoutException')
     expect(rows[1]).toHaveTextContent('Open')
     expect(rows[1]).toHaveTextContent('payment-service')
-    expect(rows[1]).toHaveTextContent('9910dd1f3cee')
+    // The fingerprint is on the incident page, not in the list.
+    expect(rows[1]).not.toHaveTextContent('9910dd1f3cee')
     expect(await within(rows[1]).findByText('HIGH')).toBeInTheDocument()
     expect(within(rows[1]).getByText('Timeout')).toBeInTheDocument()
     expect(rows[2]).toHaveTextContent('Investigating')

@@ -18,6 +18,18 @@ export function simpleExceptionName(exceptionType: string | null | undefined): s
   return exceptionType.split('.').pop() ?? exceptionType
 }
 
+// A qualified type ("java.net.SocketTimeoutException") or a bare one ending like an exception class.
+const TITLE_EXCEPTION = /^((?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*|[A-Z][\w$]*(?:Exception|Error|Throwable)): (.+)$/s
+
+/**
+ * Splits a default incident title ("<exceptionType>: <message>") into the message, shown as the
+ * headline, and the exception type. Titles of any other shape are returned whole.
+ */
+export function splitIncidentTitle(title: string): { headline: string; exceptionType: string | null } {
+  const match = TITLE_EXCEPTION.exec(title)
+  return match ? { headline: match[2], exceptionType: match[1] } : { headline: title, exceptionType: null }
+}
+
 export const SEVERITY_LABELS: Record<Severity, string> = {
   DEBUG: 'Debug',
   INFO: 'Info',

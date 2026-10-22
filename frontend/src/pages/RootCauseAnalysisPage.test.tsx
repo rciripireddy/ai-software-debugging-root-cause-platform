@@ -34,6 +34,11 @@ describe('RootCauseAnalysisPage', () => {
     // The point calculation is available but collapsed.
     expect(within(primary).getByText(/How this confidence was calculated \(5 of 6 points\)/)).toBeInTheDocument()
     expect(within(primary).getByText('= 5 of 6 points: HIGH')).not.toBeVisible()
+    // The strongest evidence comes first; the rest, patterns and technical details start collapsed.
+    expect(within(primary).getByText('4 occurrences within 11 minutes (burst).')).toBeVisible()
+    expect(within(primary).getByText('2 more evidence signals')).toBeInTheDocument()
+    expect(within(primary).getByText(/Events came from 2 hosts/)).not.toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Patterns' }).closest('details')).not.toHaveAttribute('open')
     expect(screen.getByRole('heading', { name: 'Limitations of this analysis' })).toBeInTheDocument()
     expect(screen.getByText(/not confirmed root causes/, { selector: 'li' })).toBeInTheDocument()
   })

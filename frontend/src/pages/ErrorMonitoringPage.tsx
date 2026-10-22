@@ -12,7 +12,7 @@ import { config } from '../config'
 import { useQuery } from '../hooks/useQuery'
 import { useUrlFilters } from '../hooks/useUrlFilters'
 import { SEVERITIES, type Severity } from '../types/api'
-import { SEVERITY_LABELS, shortFingerprint, simpleExceptionName } from '../utils/format'
+import { SEVERITY_LABELS, simpleExceptionName } from '../utils/format'
 import { distinctOptions } from '../utils/options'
 
 const PAGE_SIZE = 25
@@ -42,7 +42,7 @@ export function ErrorMonitoringPage() {
     <>
       <PageHeader
         title="Error Monitoring"
-        description="Log and error events as reported by monitored applications, newest first."
+        description="Every event reported by the monitored applications, newest first. Expand one for its stack trace."
         onRefresh={events.reload}
         refreshing={events.refreshing}
         updatedAt={events.updatedAt}
@@ -110,7 +110,7 @@ export function ErrorMonitoringPage() {
         ) : (
           <>
             <div className="table-wrapper" tabIndex={0} aria-label="Events table, scrolls horizontally">
-              <table className="data-table">
+              <table className="data-table data-table--cards">
                 <thead>
                   <tr>
                     <th scope="col">
@@ -120,8 +120,6 @@ export function ErrorMonitoringPage() {
                     <th scope="col">Severity</th>
                     <th scope="col">Service</th>
                     <th scope="col">Error</th>
-                    <th scope="col">Fingerprint</th>
-                    <th scope="col">Trace / correlation</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -130,7 +128,7 @@ export function ErrorMonitoringPage() {
                     return (
                       <Fragment key={event.id}>
                         <tr className={open ? 'is-expanded' : undefined}>
-                          <td>
+                          <td className="cell-toggle">
                             <button
                               type="button"
                               className="icon-button icon-button--small"
@@ -141,13 +139,13 @@ export function ErrorMonitoringPage() {
                               {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                             </button>
                           </td>
-                          <td className="nowrap">
+                          <td className="nowrap" data-label="Occurred">
                             <Timestamp value={event.timestamp} />
                           </td>
-                          <td>
+                          <td className="cell-badge">
                             <SeverityBadge severity={event.severity} />
                           </td>
-                          <td>
+                          <td data-label="Service">
                             <div className="cell-stack">
                               <span>{event.application.service}</span>
                               <span className="muted">
@@ -155,28 +153,20 @@ export function ErrorMonitoringPage() {
                               </span>
                             </div>
                           </td>
-                          <td className="cell-message">
+                          <td className="cell-message cell-primary">
                             <div className="cell-stack">
-                              {event.exceptionType && (
-                                <code title={event.exceptionType}>{simpleExceptionName(event.exceptionType)}</code>
-                              )}
                               <span>{event.message}</span>
-                            </div>
-                          </td>
-                          <td>
-                            <code title={event.fingerprint}>{shortFingerprint(event.fingerprint)}</code>
-                          </td>
-                          <td>
-                            <div className="cell-stack">
-                              {event.traceId && <code title="Trace ID">{event.traceId}</code>}
-                              {event.correlationId && <code title="Correlation ID">{event.correlationId}</code>}
-                              {!event.traceId && !event.correlationId && <span className="muted">—</span>}
+                              {event.exceptionType && (
+                                <code className="cell-type" title={event.exceptionType}>
+                                  {simpleExceptionName(event.exceptionType)}
+                                </code>
+                              )}
                             </div>
                           </td>
                         </tr>
                         {open && (
                           <tr className="detail-row">
-                            <td colSpan={7}>
+                            <td colSpan={5}>
                               <EventDetails eventId={event.id} />
                             </td>
                           </tr>
