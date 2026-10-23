@@ -28,18 +28,23 @@ src/analysis_service/
 evaluation/         evaluation on the labelled synthetic scenarios (not in the image)
 tests/
 requirements.lock   exact dependency versions installed in the Docker image
+requirements-dev.lock  exact test and lint tool versions (CI and local development)
 ```
 
 The Docker image installs the versions in `requirements.lock` (multi-stage build, non-root
 user). After changing dependencies in `pyproject.toml`, regenerate the file with the command in
-its header so local tests and the image keep using the same versions.
+its header so local tests and the image keep using the same versions; likewise
+`requirements-dev.lock` after changing the `dev` extras.
 
 ## Local development
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate
-pip install -e ".[dev]"
+# Exact versions: requirements.lock is what the Docker image installs, requirements-dev.lock adds
+# the test and lint tools (the same set CI uses; see docs/ci.md).
+pip install -r requirements.lock -r requirements-dev.lock
+pip install --no-deps -e .
 
 pytest                 # unit tests; API/persistence tests start PostgreSQL with Testcontainers (Docker)
 ruff check .           # lint

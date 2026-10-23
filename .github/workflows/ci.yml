@@ -1,0 +1,185 @@
+# Validates every push to main and every pull request targeting main. Seven independent jobs run
+# in parallel; each one appears as its own check on a pull request. What each job catches and how
+# to run the same checks locally: docs/ci.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Validation only: read the repository, nothing else (no packages, deployments or write access).
+permissions:
+  contents: read
+
+# A new push to a pull request cancels that pull request's run in progress. Runs on main are never
+# cancelled or skipped: each one gets its own group, so every commit on main is validated.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies (package-lock.json)
+        run: npm ci --no-fund --no-audit
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build (live API)
+        run: npm run build
+      - name: Build (demo mode)
+        run: npm run build:demo
+
+  # Both Spring Boot services: unit tests and the Testcontainers integration tests, which start
+  # PostgreSQL and Kafka containers through the runner's Docker engine (no extra setup needed).
+  java:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ingestion Service
+            service: ingestion-service
+          - name: Incident Service
+            service: incident-service
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          cache-dependency-path: backend/${{ matrix.service }}/pom.xml
+      - name: Run all tests (Maven Wrapper)
+        working-directory: backend/${{ matrix.service }}
+        run: sh mvnw -B -ntp test
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.service }}-test-reports
+          path: backend/${{ matrix.service }}/target/surefire-reports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  analysis:
+    name: Analysis Service
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: analysis-service
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: analysis-service/requirements*.lock
+      # requirements.lock is exactly what the Docker image installs; requirements-dev.lock adds
+      # the test and lint tools without changing any runtime version.
+      - name: Install locked dependencies
+        run: |
+          pip install -r requirements.lock -r requirements-dev.lock
+          pip install --no-deps -e .
+      - name: Lint (ruff check)
+        run: ruff check .
+      - name: Format check (ruff format)
+        run: ruff format --check .
+      - name: Tests (pytest)
+        run: pytest
+
+  infrastructure:
+    name: Infrastructure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check for committed secrets and required files
+        run: sh scripts/ci/check-repository.sh
+      - name: Generate CI-only environment (random values, masked)
+        run: sh scripts/ci/generate-env.sh "$RUNNER_TEMP/ci.env"
+      - name: Validate Compose files (development and production-style)
+        run: sh scripts/ci/check-compose.sh "$RUNNER_TEMP/ci.env"
+      - name: Validate Prometheus and Grafana configuration
+        run: sh scripts/ci/check-monitoring.sh "$RUNNER_TEMP/ci.env"
+
+  # Builds the four application images to catch broken Dockerfiles. Nothing is pushed anywhere.
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build ingestion-service image
+        run: docker build --tag rcp/ingestion-service:ci backend/ingestion-service
+      - name: Build incident-service image
+        run: docker build --tag rcp/incident-service:ci backend/incident-service
+      - name: Build analysis-service image
+        run: docker build --tag rcp/analysis-service:ci analysis-service
+      - name: Build frontend image
+        run: docker build --tag rcp/frontend:ci frontend
+      - name: List images
+        run: docker image ls 'rcp/*'
+
+  # Starts the production-style stack (docker-compose.yml only; the development override is
+  # deliberately not loaded) without the monitoring containers, then drives one event through
+  # the dashboard proxy: sign-in, ingestion, Kafka, incident, analysis and role checks.
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: rcp-ci
+      COMPOSE_FILE: docker-compose.yml
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Generate CI-only environment (random values, masked)
+        run: sh scripts/ci/generate-env.sh "$RUNNER_TEMP/ci.env"
+      - name: Build and start the stack, wait until healthy
+        run: >-
+          docker compose --env-file "$RUNNER_TEMP/ci.env" up --detach --build
+          --wait --wait-timeout 600
+          frontend ingestion-service incident-service analysis-service
+      - name: Run smoke test
+        run: python3 scripts/smoke_test.py --env-file "$RUNNER_TEMP/ci.env"
+      - name: Show container status and logs
+        if: failure()
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/ci.env" ps --all
+          docker compose --env-file "$RUNNER_TEMP/ci.env" logs --no-color --tail 200
+      - name: Stop the stack
+        if: always()
+        run: docker compose --env-file "$RUNNER_TEMP/ci.env" down --volumes

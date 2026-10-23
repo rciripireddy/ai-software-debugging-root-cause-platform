@@ -3,7 +3,8 @@
 How the platform runs in Docker: containers and networks, starting and stopping, data, logs,
 health checks, metrics, monitoring with Prometheus and Grafana, and what to do when something
 fails. The behaviour described in [Failure and recovery](#failure-and-recovery) was tested on the
-local Compose stack.
+local Compose stack. Automated checks of the stack (GitHub Actions) are described in
+[ci.md](ci.md).
 
 ## Containers
 

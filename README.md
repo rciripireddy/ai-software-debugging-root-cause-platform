@@ -1,5 +1,7 @@
 # Software Debugging & Root Cause Platform
 
+[![CI](https://github.com/rciripireddy/ai-software-debugging-root-cause-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rciripireddy/ai-software-debugging-root-cause-platform/actions/workflows/ci.yml)
+
 A platform for collecting application logs, monitoring errors, correlating related failures into
 incidents, detecting recurring problems and identifying likely root causes.
 
@@ -7,13 +9,14 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 7 — Docker, monitoring, logging and runtime hardening.**
+> **Project status: Phase 8 — Automated testing and CI.**
 > Log events are ingested, published reliably to Kafka and correlated into incidents
 > automatically. The analysis service suggests **potential** root causes with evidence, using
 > deterministic rules (no machine learning, no external AI service). The React dashboard shows
 > all of it from the real APIs after signing in, and can also run as a clearly labelled demo with
 > bundled synthetic data. The services run hardened in Docker with health checks, structured logs,
-> Prometheus metrics and a Grafana dashboard. See [Roadmap](#roadmap).
+> Prometheus metrics and a Grafana dashboard. GitHub Actions runs every test suite, the image
+> builds and an end-to-end smoke test on each push and pull request. See [Roadmap](#roadmap).
 
 ## What works today
 
@@ -70,6 +73,10 @@ React dashboard.
 - **Observability**: JSON logs with one correlation ID from the dashboard proxy through every
   service and Kafka, Prometheus metrics for requests, ingestion, outbox, Kafka processing,
   analyses and connection pools, alert rules, and a provisioned Grafana dashboard.
+- **Continuous integration** (see [Continuous integration](#continuous-integration)): GitHub
+  Actions checks the dashboard, both Spring Boot services, the analysis service, the Docker and
+  monitoring configuration and the image builds, and runs a smoke test of the whole stack, on
+  every push and pull request, without any stored secrets.
 - **Demo data**: synthetic log events in [`sample-data/`](sample-data/) and a script that sends them
   and shows the incidents created from them; a **demo mode** of the dashboard
   (`npm run build:demo`) that serves bundled synthetic data without any backend.
@@ -110,6 +117,7 @@ Kafka messages. analysis-service runs on request and is not part of that pipelin
 | Messaging | Apache Kafka 4.3 (KRaft, single node) |
 | Database | PostgreSQL 17 |
 | Runtime | Docker, Docker Compose |
+| CI | GitHub Actions |
 
 ## Repository layout
 
@@ -123,7 +131,9 @@ Kafka messages. analysis-service runs on request and is not part of that pipelin
 ├── database/init/             PostgreSQL initialization (schemas)
 ├── sample-data/               Demo log events, a loader script, labelled analysis scenarios
 ├── monitoring/                Prometheus configuration and alert rules, Grafana provisioning and dashboard
-├── docs/                      Architecture, API, database, configuration, security and operations notes
+├── scripts/                   CI checks and the end-to-end smoke test
+├── .github/workflows/         GitHub Actions workflow (ci.yml)
+├── docs/                      Architecture, API, database, configuration, security, operations and CI notes
 ├── screenshots/               Dashboard screenshots
 ├── docker-compose.yml         Production-style runtime (dashboard, Prometheus and Grafana published)
 ├── docker-compose.override.yml  Development ports for the services, PostgreSQL and Kafka
@@ -291,9 +301,11 @@ cd backend/incident-service && ./mvnw test
 cd analysis-service
 python -m venv .venv
 source .venv/bin/activate         # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -r requirements.lock -r requirements-dev.lock   # exact versions, as in CI and Docker
+pip install --no-deps -e .
 pytest                            # API/persistence tests start PostgreSQL with Testcontainers
 ruff check .
+ruff format --check .
 python -m evaluation              # evaluation on the labelled synthetic scenarios
 # Run on the host (needs PostgreSQL; analysis requests also need the other two services):
 # export DB_PORT='<POSTGRES_PORT>' DB_PASSWORD='<POSTGRES_PASSWORD>' \
@@ -308,6 +320,7 @@ npm ci
 npm run dev                       # http://localhost:5173, proxies /api/* to the local services
 npm run dev:demo                  # demo mode: bundled synthetic data, no backend needed
 npm run lint
+npm run typecheck
 npm test
 npm run build                     # live build (used by the Docker image)
 npm run build:demo                # static demo build in dist-demo/
@@ -397,6 +410,24 @@ configured from [`monitoring/`](monitoring/) without manual setup and bound to `
 
 Details, measured failure behaviour and troubleshooting: [docs/operations.md](docs/operations.md).
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to `main` and every pull
+request targeting it. Seven parallel jobs, each shown as its own check:
+
+| Check | What it verifies |
+| --- | --- |
+| **Frontend** | ESLint, TypeScript, Vitest, live and demo builds |
+| **Ingestion Service** / **Incident Service** | All Maven tests, including Testcontainers integration tests with PostgreSQL and Kafka |
+| **Analysis Service** | Ruff lint and format, pytest, with the same locked dependency versions as the Docker image |
+| **Infrastructure** | No committed `.env` files or keys, both Compose configurations and their port exposure, Prometheus rules and Grafana provisioning loaded by the real tools |
+| **Docker Build** | All four application images build (nothing is pushed) |
+| **Smoke Test** | The production-style stack starts healthy; sign-in, an event through Kafka to an incident, an analysis and role checks, all through the dashboard proxy |
+
+CI uses throwaway credentials generated for each run, never real ones, and a read-only token.
+What each job catches, the same commands to run locally, and the recommended branch protection
+for `main`: [docs/ci.md](docs/ci.md).
+
 ## Configuration
 
 All Docker Compose settings are read from `.env` (not committed). See
@@ -407,6 +438,7 @@ are set, and each service receives only the secrets it needs.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — components, request routing, health checks, logging
+- [docs/ci.md](docs/ci.md) — GitHub Actions jobs, local equivalents, CI secrets, smoke test and branch protection
 - [docs/operations.md](docs/operations.md) — Docker runtime, start/stop, volumes, logs, health model, metrics, Prometheus/Grafana, failure recovery and troubleshooting
 - [docs/api.md](docs/api.md) — REST endpoints with examples and error format
 - [frontend/README.md](frontend/README.md) — dashboard pages, structure and commands
@@ -426,7 +458,8 @@ are set, and each service receives only the secrets it needs.
 | 4 | Root cause analysis: rule-based analysis service with recurring patterns, related incidents and ranked potential causes with evidence | Done |
 | 5 | Dashboard integration: all pages on the real APIs, incidents and incident detail, analysis with evidence, demo mode | Done |
 | 6 | Authentication and security hardening: sign-in, roles, protected APIs, service credentials, CSRF, rate limits, security headers | Done |
-| 7 | Docker, monitoring, logging and runtime hardening: hardened containers, health model, structured logs and correlation, Prometheus metrics, Grafana, failure recovery | **Current** |
-| 8 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |
+| 7 | Docker, monitoring, logging and runtime hardening: hardened containers, health model, structured logs and correlation, Prometheus metrics, Grafana, failure recovery | Done |
+| 8 | Automated testing and CI: GitHub Actions for every test suite, configuration checks, image builds and an end-to-end smoke test | **Current** |
+| 9 | Deployment, including a public preview of the dashboard | Planned |
 
 Scope of later phases may be refined as the project progresses.

@@ -80,6 +80,7 @@ npm ci
 npm run dev          # http://localhost:5173, proxies /api/* to the services on localhost
 npm run dev:demo     # same UI with the bundled demo data, no backend needed
 npm run lint
+npm run typecheck    # TypeScript project check (tsc -b), also part of both builds
 npm test             # Vitest + Testing Library
 npm run build        # live build into dist/ (used by the Docker image)
 npm run build:demo   # static demo build into dist-demo/ (no API calls)

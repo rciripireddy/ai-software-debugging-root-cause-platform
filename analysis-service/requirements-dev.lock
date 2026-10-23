@@ -1,0 +1,21 @@
+# Exact test and lint tool versions for CI and local development, installed together with
+# requirements.lock (the Docker image's runtime versions, which this file never changes):
+#   pip install -r requirements.lock -r requirements-dev.lock && pip install --no-deps -e .
+# Resolved in a clean python:3.12-slim container, constrained by requirements.lock; regenerate
+# after changing the dev dependencies in pyproject.toml:
+#   docker run --rm -v "$PWD:/src:ro" python:3.12-slim sh -c \
+#     "cp -r /src /tmp/app && cd /tmp/app && pip install -q -r requirements.lock \
+#      && pip freeze > /tmp/runtime.txt && pip install -q -c requirements.lock '.[dev]' \
+#      && pip freeze --exclude analysis-service | grep -vxFf /tmp/runtime.txt"
+charset-normalizer==3.5.2
+docker==7.2.0
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+Pygments==2.21.0
+pytest==9.1.1
+requests==2.34.2
+ruff==0.17.1
+testcontainers==4.15.0
+urllib3==2.8.0
+wrapt==2.5.1
