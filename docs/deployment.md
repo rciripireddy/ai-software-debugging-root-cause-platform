@@ -2,6 +2,9 @@
 
 ## What is public
 
+**Live: [https://ai-root-cause-platform.pages.dev](https://ai-root-cause-platform.pages.dev)**
+(Cloudflare Pages project `ai-root-cause-platform`, production branch `main`).
+
 Only the **demo build of the dashboard** is published, as a static site on Cloudflare Pages
 (free tier):
 
@@ -61,19 +64,20 @@ Docker addresses, database URLs, file-system paths, e-mail addresses or a value 
 
 ## Publishing
 
-Cloudflare Pages builds from the GitHub repository: every push to `main` that changes `frontend/`
-deploys the production site, and pull requests get preview URLs. Nothing in the repository
-deploys (no tokens, no deployment step in CI); GitHub Actions only validates the demo build.
+The production site is live at <https://ai-root-cause-platform.pages.dev>. Cloudflare Pages
+builds it from the GitHub repository: a push to `main` deploys the production site (only pushes
+that change `frontend/` when build watch paths are set, see step 5), and pull requests get preview
+URLs. Nothing in the repository deploys (no tokens, no deployment step in CI); GitHub Actions only
+validates the demo build.
 
-One-time setup in the Cloudflare dashboard (labels may differ slightly):
+How the project was set up in the Cloudflare dashboard (labels may differ slightly):
 
 1. *Workers & Pages* → *Create application* → *Pages* → *Import an existing Git repository*.
 2. Connect GitHub and give the Cloudflare Pages app access to **only this repository**.
 3. Project name `ai-root-cause-platform`, production branch `main`, framework preset *None*,
    build command `npm run build:demo`, build output directory `dist-demo`, root directory
    (under *Advanced*) `frontend`. No environment variables.
-4. *Save and Deploy*. The site is published at `https://<project name>.pages.dev` (Cloudflare adds
-   a suffix if the name is taken).
+4. *Save and Deploy*. Cloudflare publishes the project at <https://ai-root-cause-platform.pages.dev>.
 5. Optional: *Settings → Build → Build watch paths* → include `frontend/*`, so commits that change
    only the backend or docs do not trigger a deployment.
 
@@ -98,6 +102,9 @@ distinct incidents; see [frontend/src/demo/README.md](../frontend/src/demo/READM
 - The demo cannot ingest events or run the analysis engine; it shows stored results.
 - Relative times ("1 week ago") are computed against the visitor's clock, so the data looks older
   as time passes; the capture date is shown on the Service Health page.
+- Pages adds `Access-Control-Allow-Origin: *` to every response by default. Harmless here: the
+  site serves only public static files and has no API or cookies. Plain `http://` requests are
+  redirected to `https://` by Cloudflare.
 - Cloudflare serves `index.html` (status 200) for any unknown path, including a mistyped asset
   path, because of the client-side routing fallback; the dashboard shows its own "not found" page
   for unknown routes.

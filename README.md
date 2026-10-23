@@ -20,15 +20,17 @@ React dashboard.
 
 ## Live demo
 
-<!-- LIVE_DEMO_URL: replace the next line with the Cloudflare Pages URL once the project is published. -->
-**Live demo: not published yet.** It will be a static preview on Cloudflare Pages.
+**[https://ai-root-cause-platform.pages.dev](https://ai-root-cause-platform.pages.dev)**
 
-The live demo is the real dashboard running on **bundled synthetic data**: no backend, no sign-in,
-no requests to any service. Visitors can explore the overview, filter error events and open their
+An interactive public demo of the real dashboard, running on **bundled synthetic data**: no
+sign-in, and no requests to any service. Explore the overview, filter error events and open their
 stack traces, browse incidents, read root cause analyses with their evidence, confidence and
-related incidents, and see the service health snapshot. The full platform (ingestion, Kafka,
-correlation, the analysis engine, monitoring) runs locally with Docker; see
-[Quick start](#quick-start-docker). Details: [docs/deployment.md](docs/deployment.md).
+related incidents, and see the service health snapshot.
+
+The public demo is a static site; the backend is not exposed. The complete platform (ingestion
+and incident services, Kafka, PostgreSQL, the analysis engine, Prometheus and Grafana) runs
+locally with Docker; see [Quick start](#quick-start-docker). Details:
+[docs/deployment.md](docs/deployment.md).
 
 ## What works today
 
