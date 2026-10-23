@@ -83,7 +83,8 @@ npm run lint
 npm run typecheck    # TypeScript project check (tsc -b), also part of both builds
 npm test             # Vitest + Testing Library
 npm run build        # live build into dist/ (used by the Docker image)
-npm run build:demo   # static demo build into dist-demo/ (no API calls)
+npm run build:demo   # static demo build into dist-demo/ (no API calls), then checks the bundle;
+                     # published as the public demo on Cloudflare Pages (docs/deployment.md)
 ```
 
 Configuration (API base paths, refresh intervals, timeouts): see

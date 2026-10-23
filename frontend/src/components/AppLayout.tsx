@@ -108,8 +108,8 @@ export function AppLayout() {
           <div className="demo-banner" role="note">
             <FlaskConical size={18} aria-hidden="true" />
             <p>
-              <strong>Demo mode.</strong> This dashboard shows bundled synthetic data captured from a local run of
-              the platform. No backend is connected: nothing is ingested, correlated or analyzed live.
+              <strong>Demo mode.</strong> Interactive preview using synthetic incidents, bundled with the page. No
+              backend is connected: nothing is ingested, correlated or analyzed live.
             </p>
           </div>
         )}

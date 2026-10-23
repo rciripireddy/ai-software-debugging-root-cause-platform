@@ -217,11 +217,16 @@ function AnalysisPanel({ incidentId }: { incidentId: string }) {
           </p>
         )}
         {runError !== undefined && <ErrorState error={runError} onRetry={() => void run()} compact />}
-        {fresh && (
-          <p className="inline-note inline-note--success" role="status">
-            Analysis completed: revision {fresh.revision}.
-          </p>
-        )}
+        {fresh &&
+          (api.mode === 'demo' ? (
+            <p className="inline-note" role="status">
+              Showing the stored demo analysis (revision {fresh.revision}); no new analysis was run.
+            </p>
+          ) : (
+            <p className="inline-note inline-note--success" role="status">
+              Analysis completed: revision {fresh.revision}.
+            </p>
+          ))}
       </section>
 
       {stored.loading && !fresh ? (

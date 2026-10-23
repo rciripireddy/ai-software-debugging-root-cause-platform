@@ -11,6 +11,13 @@ application `demo-store`) and the demo events in `sample-data/application-logs.j
 analysis engine; nothing was edited by hand. It contains no event metadata or raw payloads and no
 real customer or system data.
 
+**Curated for the public demo.** The capture is reduced to 8 clearly different incidents in 8
+services (`scripts/curate-demo-data.mjs`): a slow payment gateway, the payment timeout and the
+failed checkout it causes, a database pool problem, a code defect, an expired token, a
+configuration error, a fatal out-of-memory error and one cause the rules cannot classify, with
+HIGH, MEDIUM and LOW confidence and INFO, WARN, ERROR and FATAL events. Records are only selected,
+never edited; the script fails if a kept record would still reference a removed one.
+
 **What demo mode does not do.** It cannot ingest, correlate or analyze anything. "Run analysis"
 shows the analysis stored in the dataset. There is no sign-in: a synthetic "Demo visitor"
 session (`demoAuth.ts`) is built in, without credentials, and makes no requests. Overview figures are computed from the bundled
@@ -26,6 +33,7 @@ With the Docker stack running (`docker compose up -d`), from the repository root
 python sample-data/send_sample_logs.py --application demo-webshop --analyze
 cd analysis-service && python -m evaluation --live --application demo-store && cd ..
 cd frontend && node scripts/capture-demo-data.mjs --applications demo-store,demo-webshop
+node scripts/curate-demo-data.mjs     # keep the curated incidents (list at the top of the script)
 ```
 
 The first two commands send the synthetic events through the ingestion API and run the analyses;

@@ -25,6 +25,8 @@ build/
 node_modules/
 dist/
 dist-demo/
+# Local state of `wrangler pages dev` (see docs/deployment.md)
+.wrangler/
 coverage/
 *.tsbuildinfo
 npm-debug.log*

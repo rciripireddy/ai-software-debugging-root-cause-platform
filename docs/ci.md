@@ -2,8 +2,10 @@
 
 GitHub Actions validates the repository with one workflow,
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). It runs on every push to `main`, every
-pull request targeting `main`, and on demand (*Actions → CI → Run workflow*). Nothing is deployed
-or published: no images are pushed, no registry or cloud credentials are involved.
+pull request targeting `main`, and on demand (*Actions → CI → Run workflow*). The workflow deploys
+and publishes nothing: no images are pushed, no registry or cloud credentials are involved. The
+public demo is built and published separately by Cloudflare Pages from the same repository
+([deployment.md](deployment.md)).
 
 CI is self-contained. Besides the code, it only downloads packages and public base images (npm,
 Maven Central, PyPI, Docker Hub); no test calls an external API or a real system, and no real
@@ -15,7 +17,7 @@ The seven jobs run in parallel, each as its own check on a pull request:
 
 | Check | Runs | Fails when |
 | --- | --- | --- |
-| **Frontend** | `npm ci`, `npm run lint`, `npm run typecheck`, `npm test` (Vitest), `npm run build`, `npm run build:demo` | ESLint errors, type errors, failing tests, a broken live or demo build, `package-lock.json` out of sync |
+| **Frontend** | Node.js from `frontend/.node-version`; `npm ci`, `npm run lint`, `npm run typecheck`, `npm test` (Vitest), `npm run build`, `npm run build:demo` (which ends with the public demo bundle check, see [deployment.md](deployment.md#build)) | ESLint errors, type errors, failing tests, a broken live or demo build, `package-lock.json` out of sync, network code, local addresses or secrets in the public demo bundle |
 | **Ingestion Service** | `sh mvnw -B -ntp test` in `backend/ingestion-service`: unit tests and Testcontainers integration tests (PostgreSQL 17, Kafka 4.3) | compilation errors, failing unit or integration tests (API, security, migrations, outbox, metrics) |
 | **Incident Service** | the same for `backend/incident-service` | the same, including Kafka consumption, idempotency, retries and dead letters, sign-in |
 | **Analysis Service** | installs `requirements.lock` + `requirements-dev.lock`, then `ruff check .`, `ruff format --check .`, `pytest` (with a Testcontainers PostgreSQL) | lint errors, unformatted code, failing tests |

@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: frontend/.node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies (package-lock.json)
@@ -47,7 +47,7 @@ jobs:
         run: npm test
       - name: Build (live API)
         run: npm run build
-      - name: Build (demo mode)
+      - name: Build (demo mode) and check the public demo bundle
         run: npm run build:demo
 
   # Both Spring Boot services: unit tests and the Testcontainers integration tests, which start

@@ -34,6 +34,42 @@ describe('demo dataset', () => {
       expect(event).not.toHaveProperty('rawPayload')
     }
   })
+
+  it('is a small curated set with every confidence level and no test or verification data', () => {
+    expect(data.incidents.length).toBeGreaterThanOrEqual(8)
+    expect(data.incidents.length).toBeLessThanOrEqual(15)
+    const confidences = new Set(Object.values(data.analyses).map((analysis) => analysis.confidence))
+    expect(confidences).toEqual(new Set(['HIGH', 'MEDIUM', 'LOW']))
+    expect(new Set(Object.values(data.analyses).map((a) => a.primaryCandidate?.category)).size).toBeGreaterThanOrEqual(5)
+    for (const name of new Set(data.applications.map((application) => application.name))) {
+      expect(name).toMatch(/^demo-/)
+    }
+  })
+
+  it('references only incidents and events that are part of the dataset', () => {
+    const incidentIds = new Set(data.incidents.map((incident) => incident.id))
+    const eventIds = new Set(data.events.map((event) => event.id))
+    for (const incident of data.incidents) {
+      expect(data.analyses[incident.id]?.incidentId).toBe(incident.id)
+      for (const event of incident.recentEvents) expect(eventIds).toContain(event.id)
+    }
+    for (const id of [...Object.keys(data.analyses), ...Object.keys(data.history), ...Object.keys(data.related)]) {
+      expect(incidentIds).toContain(id)
+    }
+    for (const related of [...Object.values(data.related).flat(), ...Object.values(data.analyses).flatMap((a) => a.relatedIncidents)]) {
+      expect(incidentIds).toContain(related.incidentId)
+    }
+  })
+
+  it('contains no local or internal addresses, credentials or e-mail addresses', () => {
+    const text = JSON.stringify(data)
+    expect(text).not.toMatch(/localhost|127\.0\.0\.1|host\.docker\.internal/i)
+    expect(text).not.toMatch(/(ingestion-service|incident-service|analysis-service|postgres|kafka):\d+/i)
+    expect(text).not.toMatch(/jdbc:|postgres(ql)?:\/\/|Bearer\s+ey|password\s*[=:]/i)
+    // In JSON text a Windows path's backslash is escaped (C:\\Users).
+    expect(text).not.toMatch(/[A-Za-z]:(\\{1,2}|\/)Users|\/home\/|\/Users\//)
+    expect(text).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/)
+  })
 })
 
 describe('demo mode', () => {
@@ -66,11 +102,20 @@ describe('demo mode', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('shows the captured health snapshot, not live checks', async () => {
+  it('shows the captured health snapshot of a demo environment, not live checks', async () => {
     renderRoute('/health', createDemoApi(data))
 
-    expect(screen.getByText(/snapshot recorded when the demo data was captured/)).toBeInTheDocument()
-    expect(await screen.findByText('3 of 3 services healthy')).toBeInTheDocument()
+    expect(screen.getByText(/Demo environment: no backend services run behind this preview/)).toBeInTheDocument()
+    expect(screen.getByText(/snapshot recorded when\s+the demo data was captured/)).toBeInTheDocument()
+    expect(await screen.findByText('3 of 3 services healthy when the demo data was captured')).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('demo sign-in, session restore and sign-out make no requests', async () => {
+    const auth = createDemoAuthApi()
+    await expect(auth.restore()).resolves.toBe(DEMO_SESSION)
+    await expect(auth.login('anyone', 'anything')).resolves.toBe(DEMO_SESSION)
+    await expect(auth.logout(DEMO_SESSION)).resolves.toBeUndefined()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -83,9 +128,17 @@ describe('demo mode', () => {
     const [incidentId, stored] = Object.entries(data.analyses).find(([, analysis]) => analysis.confidence === 'HIGH')!
     await expect(api.analyzeIncident(incidentId)).resolves.toBe(stored)
 
+    const user = userEvent.setup()
     renderRoute(`/root-cause/${incidentId}`, api)
     expect(await screen.findByText(/running an analysis shows the result stored in the demo data/)).toBeInTheDocument()
     expect(await screen.findByText('Most likely cause based on available evidence')).toBeInTheDocument()
+
+    // "Re-run" shows the stored result and says so; it does not report a completed analysis.
+    await user.click(screen.getByRole('button', { name: 'Re-run analysis' }))
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      `Showing the stored demo analysis (revision ${stored.revision}); no new analysis was run.`,
+    )
+    expect(screen.queryByText(/Analysis completed/)).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

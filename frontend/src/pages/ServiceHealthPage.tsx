@@ -5,7 +5,7 @@ import { PageHeader } from '../components/PageHeader'
 import { config } from '../config'
 import { useServiceHealth } from '../hooks/useServiceHealth'
 import type { HealthResult } from '../types/api'
-import { formatDateTimeWithZone } from '../utils/time'
+import { formatDateTime, formatDateTimeWithZone } from '../utils/time'
 
 const STATUS = {
   UP: { label: 'Healthy', icon: CheckCircle2 },
@@ -36,6 +36,7 @@ export function ServiceHealthPage() {
   const { results, isRefreshing, refresh } = useServiceHealth(api, config.refresh.health)
   const checked = api.services.filter((service) => results[service.id])
   const healthy = checked.filter((service) => results[service.id]?.status === 'UP').length
+  const demo = api.mode === 'demo'
 
   return (
     <>
@@ -46,10 +47,10 @@ export function ServiceHealthPage() {
         refreshing={isRefreshing}
       />
 
-      {api.mode === 'demo' ? (
+      {demo ? (
         <Notice>
-          Demo mode: these results are a snapshot recorded when the demo data was captured. No live health checks are
-          made.
+          Demo environment: no backend services run behind this preview. These results are a snapshot recorded when
+          the demo data was captured; no live health checks are made.
         </Notice>
       ) : (
         <Notice>
@@ -65,7 +66,7 @@ export function ServiceHealthPage() {
           ) : (
             <CircleAlert size={18} aria-hidden="true" />
           )}
-          {healthy} of {checked.length} services healthy
+          {healthy} of {checked.length} services healthy{demo && ' when the demo data was captured'}
         </p>
       )}
 
@@ -92,7 +93,7 @@ export function ServiceHealthPage() {
                   <dd>
                     {result ? (
                       <time dateTime={result.checkedAt.toISOString()} title={formatDateTimeWithZone(result.checkedAt)}>
-                        {result.checkedAt.toLocaleTimeString()}
+                        {demo ? formatDateTime(result.checkedAt) : result.checkedAt.toLocaleTimeString()}
                       </time>
                     ) : (
                       '—'

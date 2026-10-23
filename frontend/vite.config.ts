@@ -1,5 +1,7 @@
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
+import { CLOUDFLARE_PAGES_FILES } from './deploy/cloudflarePages.ts'
 
 // During `npm run dev`, backend calls are proxied to services running on localhost.
 // In Docker, the nginx configuration in nginx.conf provides the same routes.
@@ -11,10 +13,25 @@ function backendProxy(prefix: string, target: string) {
   }
 }
 
+// The demo build is the public preview on Cloudflare Pages; its headers file is part of that build only.
+function cloudflarePagesFiles(): Plugin {
+  return {
+    name: 'cloudflare-pages-files',
+    generateBundle() {
+      for (const [fileName, source] of Object.entries(CLOUDFLARE_PAGES_FILES)) {
+        this.emitFile({ type: 'asset', fileName, source })
+      }
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const demo = mode === 'demo'
   return {
-    plugins: [react()],
+    plugins: demo ? [react(), cloudflarePagesFiles()] : [react()],
+    // The demo build contains no network code at all: the module preload polyfill (fetch-based,
+    // only used by browsers without <link rel="modulepreload">) is left out too.
+    build: demo ? { modulePreload: { polyfill: false } } : {},
     resolve: {
       // Live builds load a stub instead of the demo dataset, so the dataset is not bundled at all.
       alias: demo

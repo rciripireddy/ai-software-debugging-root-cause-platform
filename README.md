@@ -9,7 +9,7 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 8 — Automated testing and CI.**
+> **Project status: Phase 9 — Public demo deployment.**
 > Log events are ingested, published reliably to Kafka and correlated into incidents
 > automatically. The analysis service suggests **potential** root causes with evidence, using
 > deterministic rules (no machine learning, no external AI service). The React dashboard shows
@@ -17,6 +17,18 @@ React dashboard.
 > bundled synthetic data. The services run hardened in Docker with health checks, structured logs,
 > Prometheus metrics and a Grafana dashboard. GitHub Actions runs every test suite, the image
 > builds and an end-to-end smoke test on each push and pull request. See [Roadmap](#roadmap).
+
+## Live demo
+
+<!-- LIVE_DEMO_URL: replace the next line with the Cloudflare Pages URL once the project is published. -->
+**Live demo: not published yet.** It will be a static preview on Cloudflare Pages.
+
+The live demo is the real dashboard running on **bundled synthetic data**: no backend, no sign-in,
+no requests to any service. Visitors can explore the overview, filter error events and open their
+stack traces, browse incidents, read root cause analyses with their evidence, confidence and
+related incidents, and see the service health snapshot. The full platform (ingestion, Kafka,
+correlation, the analysis engine, monitoring) runs locally with Docker; see
+[Quick start](#quick-start-docker). Details: [docs/deployment.md](docs/deployment.md).
 
 ## What works today
 
@@ -357,8 +369,8 @@ percentage.
 signing in and shows "Live" on every page. The demo build (`npm run build:demo`) shows bundled synthetic data captured
 from a local run of the platform, marks every page "Demo data" with a banner, and makes no API
 requests; it cannot ingest or analyze anything. It needs no sign-in: a synthetic "Demo visitor"
-session is built in, without any credentials. See
-[frontend/src/demo/README.md](frontend/src/demo/README.md).
+session is built in, without any credentials. The demo build is what the [live demo](#live-demo)
+publishes. See [frontend/src/demo/README.md](frontend/src/demo/README.md).
 
 ### Screenshots
 
@@ -438,6 +450,7 @@ are set, and each service receives only the secrets it needs.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — components, request routing, health checks, logging
+- [docs/deployment.md](docs/deployment.md) — the public demo on Cloudflare Pages: what is published, build settings, routing, headers
 - [docs/ci.md](docs/ci.md) — GitHub Actions jobs, local equivalents, CI secrets, smoke test and branch protection
 - [docs/operations.md](docs/operations.md) — Docker runtime, start/stop, volumes, logs, health model, metrics, Prometheus/Grafana, failure recovery and troubleshooting
 - [docs/api.md](docs/api.md) — REST endpoints with examples and error format
@@ -459,7 +472,7 @@ are set, and each service receives only the secrets it needs.
 | 5 | Dashboard integration: all pages on the real APIs, incidents and incident detail, analysis with evidence, demo mode | Done |
 | 6 | Authentication and security hardening: sign-in, roles, protected APIs, service credentials, CSRF, rate limits, security headers | Done |
 | 7 | Docker, monitoring, logging and runtime hardening: hardened containers, health model, structured logs and correlation, Prometheus metrics, Grafana, failure recovery | Done |
-| 8 | Automated testing and CI: GitHub Actions for every test suite, configuration checks, image builds and an end-to-end smoke test | **Current** |
-| 9 | Deployment, including a public preview of the dashboard | Planned |
+| 8 | Automated testing and CI: GitHub Actions for every test suite, configuration checks, image builds and an end-to-end smoke test | Done |
+| 9 | Public demo deployment: the demo dashboard with curated synthetic data as a static site on Cloudflare Pages | **Current** |
 
 Scope of later phases may be refined as the project progresses.
