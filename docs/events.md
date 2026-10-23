@@ -202,7 +202,7 @@ Messages on the dead-letter topic are unchanged and carry Spring Kafka's diagnos
 including `kafka_dlt-original-topic`, `-original-partition`, `-original-offset`,
 `-exception-fqcn` and `-exception-message` (the root cause appears in the message text). The
 consumer then continues with the next message; a bad message never blocks a partition.
-Re-processing dead-lettered messages is a manual step for now; there is no replay tool yet.
+Re-processing dead-lettered messages is a manual step; there is no replay tool.
 
 ### Inspecting topics locally
 

@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 import { ROLE_LABELS } from '../auth/types'
 import { NAV_ITEMS } from '../navigation'
 
-export const APP_VERSION = '0.6.0'
+export const APP_VERSION = '1.0.0'
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)

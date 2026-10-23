@@ -193,6 +193,21 @@ restart on a failed liveness probe.
 The dashboard's Service Health page calls the same readiness endpoints, so "Healthy" means the
 service can do its work, not only that the process runs.
 
+Checking by hand (the service ports are development ports; through the dashboard proxy only the
+health endpoints are reachable, metrics are not):
+
+```bash
+curl http://localhost:8081/actuator/health/liveness
+curl http://localhost:8081/actuator/health/readiness             # includes the database connection
+curl http://localhost:8082/actuator/health/readiness
+curl http://localhost:8000/health/readiness
+curl http://localhost:3000/api/ingestion/actuator/health/readiness   # through the dashboard proxy
+curl http://localhost:8081/actuator/prometheus                   # metrics (internal only)
+curl http://localhost:8000/metrics
+docker compose exec postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker compose exec kafka /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092
+```
+
 ## Metrics
 
 | Service | Endpoint | Format |
@@ -286,7 +301,7 @@ about 408 MiB. These are single measurements on one machine, not a load test; ra
 
 ## Failure and recovery
 
-Each scenario was run against the local stack (Phase 7 verification).
+Each scenario was run against the local Compose stack.
 
 | Failure | What happens | Recovery |
 | --- | --- | --- |

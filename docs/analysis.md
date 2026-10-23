@@ -35,19 +35,19 @@ flowchart LR
 ### Why REST instead of reading the other schemas
 
 The service reads incidents and events **only through the public REST APIs** of incident-service
-and ingestion-service and writes only to its own `analysis` schema. Phase 3 removed the foreign
-keys between the `ingestion` and `incident` schemas; reading those tables directly would bring
-the coupling back. The cost is more HTTP calls per analysis (about 1 + 20 for the incident and,
+and ingestion-service and writes only to its own `analysis` schema. The `ingestion` and
+`incident` schemas deliberately have no foreign keys between them; reading those tables directly
+would bring the coupling back. The cost is more HTTP calls per analysis (about 1 + 20 for the incident and,
 for a pool of N incidents, 1 + 2N more, run up to 8 at a time). That is acceptable for
 on-request analysis of one incident; a batch or search endpoint would be needed before analyzing
-many incidents at once. Since Phase 6 these calls carry the internal service token
+many incidents at once. These calls carry the internal service token
 (`X-Service-Token`), not the credentials of the user who requested the analysis (see
 [security.md](security.md#service-to-service-authentication)).
 
 ### Why on request, without Kafka
 
 Analysis runs when it is requested (`POST`). Consuming `error-events.v1` as well would re-analyze
-an incident on every occurrence and add a second consumer group to the Phase 3 pipeline without
+an incident on every occurrence and add a second consumer group to the event pipeline without
 a user-facing benefit yet. A trigger can be added later (for example, analyze when an incident is
 created) without changing the engine.
 

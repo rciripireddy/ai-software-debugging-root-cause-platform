@@ -73,7 +73,7 @@ Set them in `.env` (git-ignored), with your own passwords. A password that break
 above stops incident-service with a message naming the variable (never its value). Without them,
 no account is created and incident-service logs a warning. In any shared deployment, change the
 initial password after the first sign-in (`PUT /api/v1/auth/password`) and remove it from the
-environment. Further accounts, disabling and role changes are done in the database for now (no
+environment. Further accounts, disabling and role changes are done in the database (there is no
 user-management API or UI).
 
 ## Access tokens and the session cookie
@@ -157,7 +157,7 @@ an address, so in a real deployment only the proxy should be reachable.
   services); bodies without `Content-Length` with `411`.
 - Every query parameter is bounded: search text up to 200 characters, names up to 100, page
   numbers up to 10,000, page sizes up to 100, time windows to their documented ranges. UUIDs and
-  enum values are validated (`400`). Event fields keep their Phase 2 limits.
+  enum values are validated (`400`). Event fields have the limits listed in [api.md](api.md).
 - All SQL is parameterized (Spring Data JPA criteria, named parameters, psycopg parameters). The
   text searches escape `%`, `_` and `\` and use them only as values. Tests send SQL-like strings
   and check that they match nothing and change nothing.
@@ -216,7 +216,9 @@ Passwords, tokens, keys and `Authorization` headers are never logged.
 
 The demo build (`npm run build:demo`) has a built-in synthetic session ("Demo visitor") instead
 of sign-in: no credentials are bundled, no sign-in or API request is made, and every page stays
-labelled "Demo data". Live builds always require signing in.
+labelled "Demo data". Live builds always require signing in. The public demo
+([deployment.md](deployment.md)) is this build as static files, served with
+`connect-src 'none'`, so the browser would refuse any request it tried to make.
 
 ## Limitations
 
@@ -235,8 +237,10 @@ labelled "Demo data". Live builds always require signing in.
 - **One shared signing key** for the three services (see above).
 - **Rate limits are in memory per instance** and keyed by client address as reported by the
   proxy (see above).
-- **The service ports are published on the host** for development. Anything that can reach them
-  directly bypasses nginx (but not the services' own authentication).
+- **The development setup publishes the service ports** on `127.0.0.1`
+  (`docker-compose.override.yml`). Anything that can reach them directly bypasses nginx (but not
+  the services' own authentication); the production-style `docker-compose.yml` alone does not
+  publish them.
 - **Kafka and PostgreSQL** use the local development setup: no TLS, plaintext Kafka listeners,
   and one database user for all services.
 - No formal security audit or penetration test has been done.

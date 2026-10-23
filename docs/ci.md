@@ -155,23 +155,23 @@ FRONTEND_PORT=3100 PROMETHEUS_PORT=9190 GRAFANA_PORT=3101 sh scripts/ci/generate
 python scripts/smoke_test.py --env-file /tmp/ci.env --url http://127.0.0.1:3100
 ```
 
-### Local durations
+### Durations
 
-Measured on the development machine (Windows 10, 4 CPUs, Docker Desktop), with dependency
-caches already filled. These are **not** GitHub Actions timings, which will show on the first run.
+Job durations of the first three runs on GitHub-hosted runners (pushes of 2026-10-23, all jobs
+passed); the jobs run in parallel, so a whole run takes about as long as its longest job:
 
-| Job | Local duration |
+| Job | On GitHub |
 | --- | --- |
-| Frontend | about 2.7 min (`npm ci` 66 s, lint 29 s, typecheck 12 s, Vitest 40 s, both builds 15 s) |
-| Ingestion Service | 2.2–3.1 min (66 tests) |
-| Incident Service | 2.0–2.2 min (83 tests) |
-| Analysis Service | about 1.5 min (fresh virtualenv 67 s, ruff < 1 s, pytest 21 s) |
-| Infrastructure | 23 s |
-| Docker Build | 3.2 min (`--no-cache`; the Maven download cache of the build was warm) |
-| Smoke Test | 70 s until healthy (images already built), 4 s of checks |
+| Frontend | 39–49 s |
+| Ingestion Service | 92–112 s |
+| Incident Service | 95–114 s |
+| Analysis Service | 30–41 s |
+| Infrastructure | 26–38 s |
+| Docker Build | 99–104 s |
+| Smoke Test | 112–142 s |
 
-On GitHub the longest job is expected to be **Docker Build** or **Smoke Test**: both build the two
-Java images on a fresh runner, including their Maven dependency download.
+Locally (Windows 10, 4 CPUs, Docker Desktop, warm caches) the same checks take longer: about
+2–3 minutes for each Java test suite and the frontend checks.
 
 ## Recommended branch protection
 

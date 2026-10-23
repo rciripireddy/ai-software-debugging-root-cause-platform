@@ -247,9 +247,10 @@ UPDATE auth.users SET enabled = false, updated_at = now() WHERE username = 'view
 
 ## Design notes
 
-- **Separate schemas, no cross-schema foreign keys.** Since Phase 3, incident-service builds its
-  data from Kafka messages and never needs ingestion tables to correlate or display incidents.
-  Incident `V2` copied the details of existing Phase 2 incidents from the ingestion schema before
+- **Separate schemas, no cross-schema foreign keys.** incident-service builds its data from Kafka
+  messages and never needs ingestion tables to correlate or display incidents. Incident `V2` copied
+  the details of incidents created before Kafka correlation existed (see the
+  [development history](architecture.md#development-history)) from the ingestion schema before
   dropping the foreign keys, so no data was lost.
 - **Remaining shared-database coupling**, stated honestly:
   - Both services still use the same PostgreSQL server and database (with separate schemas and
@@ -257,7 +258,7 @@ UPDATE auth.users SET enabled = false, updated_at = now() WHERE username = 'view
     the connection settings.
   - The deprecated `POST /api/v1/incidents` endpoint still reads `ingestion.error_events` for
     compatibility. It goes away together with that endpoint.
-  - On a brand-new database, incident `V1` (from Phase 2, not editable) still references the
+  - On a brand-new database, incident `V1` (an applied migration, so not editable) still references the
     ingestion tables, so ingestion-service must have migrated first. Docker Compose ensures this
     by starting incident-service after ingestion-service is healthy.
 - **analysis-service reads no other schema.** It gets incidents and events through the incident

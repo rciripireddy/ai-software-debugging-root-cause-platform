@@ -8,7 +8,7 @@ the default local ports; through the dashboard proxy the same endpoints are avai
 The IDs, timestamps and fingerprints below come from a local run with the demo data in
 [`sample-data/`](../sample-data/).
 
-Since Phase 6 every endpoint except sign-in and health needs credentials; see
+Every endpoint except sign-in and health needs credentials; see
 [Authentication](#authentication) and [security.md](security.md).
 
 ## Authentication
@@ -478,9 +478,9 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8082/api/v1/incidents/s
 
 Requires the `ADMIN` role.
 
-> **Deprecated since Phase 3.** Incidents are now created automatically from Kafka messages.
-> The endpoint still works for existing clients and responds with an RFC 9745
-> `Deprecation: @1792454400` header (2026-10-20). It will be removed in a later phase.
+> **Deprecated.** Incidents are created automatically from Kafka messages. The endpoint is kept
+> for existing clients and responds with an RFC 9745 `Deprecation: @1792454400` header
+> (2026-10-20).
 >
 > It creates an incident from events stored by ingestion-service. Because the consumer already
 > correlates every event of `ERROR` severity or above, those events normally belong to an

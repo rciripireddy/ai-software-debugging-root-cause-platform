@@ -67,7 +67,11 @@ src/
 ├── config.ts     environment-based settings
 └── test/         fixtures, fake API and auth, render helper (signed in as ADMIN by default)
 scripts/
-└── capture-demo-data.mjs   captures the demo dataset from a running stack
+├── capture-demo-data.mjs   captures the demo dataset from a running stack
+├── curate-demo-data.mjs    reduces it to the curated set shown in the public demo
+└── check-demo-build.mjs    safety check of the demo build (part of npm run build:demo)
+deploy/
+└── cloudflarePages.ts      _headers of the public demo on Cloudflare Pages (demo build only)
 ```
 
 Pages use only the `DashboardApi` interface (through `useApi()`) and `useAuth()`, so live and

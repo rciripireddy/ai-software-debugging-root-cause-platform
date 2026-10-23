@@ -1,6 +1,7 @@
 # Architecture
 
-This document describes the target architecture and marks which parts exist today.
+How the platform is built: its components, authentication, service internals, logging, request
+routing and health checks.
 
 ## Components
 
@@ -34,7 +35,7 @@ flowchart LR
 All three schemas live in the same PostgreSQL database (see [database.md](database.md#design-notes)).
 Event flow, contract and guarantees are described in [events.md](events.md).
 
-| Component | Responsibility (target) | Implemented so far (Phase 7) |
+| Component | Responsibility | Implementation |
 | --- | --- | --- |
 | `ingestion-service` | Accept, validate and persist log events; publish them to Kafka | REST API to store and read events, application registration, error fingerprinting, transactional outbox and Kafka publisher, `ingestion` schema migrations |
 | `incident-service` | Group errors into incidents automatically, detect recurring failures | Kafka consumer that correlates events into incidents (idempotent, with retries and a dead-letter topic), REST API to list/filter and retrieve incidents, deprecated manual creation, `incident` schema migrations; user accounts (`auth` schema), sign-in and access tokens |
@@ -44,6 +45,8 @@ Event flow, contract and guarantees are described in [events.md](events.md).
 | Kafka | Event stream between ingestion and incident processing | Single-node KRaft broker with `error-events.v1` and its dead-letter topic, 3 partitions each |
 | Prometheus | Collect the services' metrics | Scrapes `/actuator/prometheus` (Spring services) and `/metrics` (analysis-service) every 15 s; alert rules for unavailable services, outbox backlog, dead letters and server errors |
 | Grafana | Visualize the metrics | One provisioned dashboard: requests, errors, latency, ingestion, outbox, Kafka processing, analyses, connection pools |
+| CI | Validate every change | GitHub Actions: all test suites, configuration checks, image builds and an end-to-end smoke test. See [ci.md](ci.md) |
+| Public demo | Show the dashboard without a backend | The demo build of the dashboard as static files on Cloudflare Pages. See [deployment.md](deployment.md) |
 
 The containers, networks, health model, logs, metrics and failure behaviour are described in
 [operations.md](operations.md).
@@ -213,7 +216,8 @@ A Kafka outage is visible instead through `outbox.publish_failed` log lines, the
 
 analysis-service readiness includes only its database. incident-service and ingestion-service are
 needed only while an analysis is requested; if either is down, that request fails with `503` and
-stored analyses can still be read. Nothing in the Phase 3 pipeline depends on analysis-service.
+stored analyses can still be read. Nothing in the event pipeline (ingestion → Kafka → incidents)
+depends on analysis-service.
 
 ## Kafka listeners
 
@@ -222,3 +226,21 @@ The broker runs in combined broker + controller mode (KRaft) with three listener
 - `INTERNAL://kafka:29092` for containers on the Compose network,
 - `EXTERNAL://localhost:9092` for clients on the host machine (for example, tests run from an IDE),
 - `CONTROLLER://:9093` for the KRaft controller quorum.
+
+## Development history
+
+The platform was built in ten steps, each one a working, tested state. Some documents refer to
+them, for example to explain why an early database migration looks the way it does.
+
+| Step | Scope |
+| --- | --- |
+| 1 | Project foundation: services, dashboard shell, Docker environment, tests |
+| 2 | Ingestion API, error fingerprinting, incident API, PostgreSQL schema, validation, structured logging |
+| 3 | Event streaming: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic |
+| 4 | Rule-based root cause analysis: recurring patterns, related incidents, ranked potential causes with evidence |
+| 5 | Dashboard on the real APIs, incident detail, analysis view, demo mode |
+| 6 | Authentication and security hardening: sign-in, roles, service credentials, CSRF, rate limits, security headers |
+| 7 | Runtime hardening and observability: hardened containers, health model, structured logs and correlation, Prometheus, Grafana, failure recovery |
+| 8 | Automated testing and CI with GitHub Actions |
+| 9 | Public demo on Cloudflare Pages |
+| 10 | Documentation and presentation |
