@@ -21,7 +21,8 @@ class OutboxSchedulerTests {
 
     private final OutboxPublisher publisher = mock(OutboxPublisher.class);
     private final OutboxProperties properties = new OutboxProperties(true, Duration.ofSeconds(1), 2,
-            Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofSeconds(60), 10, Duration.ofDays(7));
+            Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofSeconds(60), 10, Duration.ofDays(7),
+            Duration.ofSeconds(15));
     private final OutboxScheduler scheduler = new OutboxScheduler(publisher, mock(OutboxEventRepository.class),
             properties);
 

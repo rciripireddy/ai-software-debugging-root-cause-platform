@@ -115,9 +115,9 @@ for (const name of applicationNames) {
 
 const health = {}
 for (const [id, path] of [
-  ['ingestion-service', `${ingestion}/actuator/health`],
-  ['incident-service', `${incident}/actuator/health`],
-  ['analysis-service', `${analysis}/health`],
+  ['ingestion-service', `${ingestion}/actuator/health/readiness`],
+  ['incident-service', `${incident}/actuator/health/readiness`],
+  ['analysis-service', `${analysis}/health/readiness`],
 ]) {
   const started = performance.now()
   try {

@@ -1,5 +1,14 @@
 name: root-cause-platform
 
+# Production-style runtime (see docs/operations.md). Only the dashboard, Prometheus and Grafana are
+# published, and only on 127.0.0.1. The development ports of the services, PostgreSQL and Kafka
+# are in docker-compose.override.yml, which `docker compose` loads automatically; leave it out with
+#   docker compose -f docker-compose.yml up -d
+
+# ---------------------------------------------------------------------------------------------
+# Shared settings
+# ---------------------------------------------------------------------------------------------
+
 # Database settings shared by all services that use PostgreSQL. Credentials come from .env.
 x-database-environment: &database-environment
   DB_HOST: postgres
@@ -14,33 +23,72 @@ x-spring-service-environment: &spring-service-environment
   KAFKA_BOOTSTRAP_SERVERS: kafka:29092
   # One JSON (Elastic Common Schema) log record per line, ready for log shipping.
   LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+  APP_ENVIRONMENT: ${APP_ENVIRONMENT:-local}
 
 # Secrets of the three application services (see docs/security.md): the key that signs and
 # verifies access tokens, and the internal credential analysis-service uses to call the others.
-# Only these services receive them; postgres, kafka and the frontend do not.
+# Only these services receive them; postgres, kafka, the frontend and monitoring do not.
 x-auth-environment: &auth-environment
   AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is not set. See .env.example.}
   INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is not set. See .env.example.}
 
+# Docker keeps at most 3 x 10 MB of logs per container (json-file driver, `docker compose logs`).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Containers that only need to write to /tmp: read-only root filesystem, no Linux capabilities,
+# no privilege escalation.
+x-hardened: &hardened
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging: *logging
+
 services:
+  # -------------------------------------------------------------------------------------------
+  # Data
+  # -------------------------------------------------------------------------------------------
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rootcause}
       POSTGRES_USER: ${POSTGRES_USER:-rootcause}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set. Copy .env.example to .env and set a password.}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    # Writes only to its data volume, the socket directory and /tmp. The entrypoint starts as
+    # root to prepare the data directory, then switches to the postgres user, which needs these
+    # capabilities.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /var/run/postgresql:size=1m
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 20s
+      start_interval: 2s
+    # Lets PostgreSQL finish a clean shutdown (checkpoint) instead of being killed after 10 s.
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     restart: unless-stopped
+    logging: *logging
 
   kafka:
     image: apache/kafka:4.3.1
@@ -50,7 +98,8 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      # INTERNAL is used by containers on the Compose network, EXTERNAL by clients on the host.
+      # INTERNAL is used by containers on the Compose network, EXTERNAL by clients on the host
+      # (published by docker-compose.override.yml for development).
       KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
@@ -64,43 +113,68 @@ services:
       # Topics are created by the services with the intended partition count; a mistyped
       # topic name fails instead of silently creating a new single-partition topic.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-    ports:
-      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+      # The default 1 GB heap is far more than this single small broker needs.
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
     volumes:
       - kafka-data:/var/lib/kafka/data
+    networks: [backend]
+    # Not read-only: the image writes its broker configuration from the environment at startup.
+    # It already runs as an unprivileged user and needs no capabilities.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 > /dev/null 2>&1"]
       interval: 15s
       timeout: 10s
       retries: 10
       start_period: 30s
+      start_interval: 5s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     restart: unless-stopped
+    logging: *logging
 
+  # -------------------------------------------------------------------------------------------
+  # Application services
+  # -------------------------------------------------------------------------------------------
   ingestion-service:
     build: ./backend/ingestion-service
+    <<: *hardened
     environment:
       <<: [*spring-service-environment, *auth-environment]
       # Only ingestion-service needs the key that log producers send.
       INGESTION_API_KEY: ${INGESTION_API_KEY:?INGESTION_API_KEY is not set. See .env.example.}
       INGESTION_RATE_LIMIT_PER_MINUTE: ${INGESTION_RATE_LIMIT_PER_MINUTE:-600}
-    ports:
-      - "${INGESTION_SERVICE_PORT:-8081}:8081"
+    networks: [frontend, backend, monitoring]
     depends_on:
+      # The service also waits for the database itself (Flyway connect retries) and keeps
+      # accepting events while Kafka is unavailable (transactional outbox); these conditions
+      # only give a clean first start.
       postgres:
         condition: service_healthy
-      # Not needed to accept events (they wait in the outbox), but lets topics be created at startup.
       kafka:
         condition: service_healthy
+    # Readiness: the database is reachable (see docs/operations.md, "Health model").
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/actuator/health/readiness"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 40s
-    restart: unless-stopped
+      retries: 4
+      start_period: 90s
+      start_interval: 5s
+    # Spring Boot's graceful shutdown takes up to 20 s per phase.
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   incident-service:
     build: ./backend/incident-service
+    <<: *hardened
     environment:
       <<: [*spring-service-environment, *auth-environment]
       # incident-service owns the user accounts and issues the access tokens.
@@ -114,8 +188,7 @@ services:
       AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
       AUTH_BOOTSTRAP_VIEWER_USERNAME: ${AUTH_BOOTSTRAP_VIEWER_USERNAME:-}
       AUTH_BOOTSTRAP_VIEWER_PASSWORD: ${AUTH_BOOTSTRAP_VIEWER_PASSWORD:-}
-    ports:
-      - "${INCIDENT_SERVICE_PORT:-8082}:8082"
+    networks: [frontend, backend, monitoring]
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,24 +202,30 @@ services:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/actuator/health/readiness"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 40s
-    restart: unless-stopped
+      retries: 4
+      start_period: 90s
+      start_interval: 5s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   analysis-service:
     build: ./analysis-service
+    <<: *hardened
     environment:
       <<: [*database-environment, *auth-environment]
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-local}
       # Incidents and events are read through the other services' REST APIs, on request,
       # authenticated with INTERNAL_SERVICE_TOKEN.
       INCIDENT_SERVICE_URL: http://incident-service:8082
       INGESTION_SERVICE_URL: http://ingestion-service:8081
       LOG_FORMAT: json
       ANALYSIS_RATE_LIMIT_PER_MINUTE: ${ANALYSIS_RATE_LIMIT_PER_MINUTE:-30}
-    ports:
-      - "${ANALYSIS_SERVICE_PORT:-8000}:8000"
+    networks: [frontend, backend, monitoring]
     depends_on:
-      # Migrations of the analysis schema run at startup. incident-service and
+      # Migrations of the analysis schema run at startup (with retries). incident-service and
       # ingestion-service are only needed when an analysis is requested (503 otherwise).
       postgres:
         condition: service_healthy
@@ -154,22 +233,116 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/readiness', timeout=3)"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
+      retries: 4
+      start_period: 30s
+      start_interval: 3s
+    # uvicorn finishes in-flight requests for up to 10 s, then the database pool is closed.
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   frontend:
     build: ./frontend
+    <<: *hardened
     ports:
-      - "${FRONTEND_PORT:-3000}:8080"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:8080"
+    networks: [frontend]
+    # No depends_on: nginx resolves the services per request and starts without them; the
+    # dashboard reports unavailable services itself.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
+      retries: 4
+      start_period: 10s
+      start_interval: 2s
+    deploy:
+      resources:
+        limits:
+          memory: 64M
 
+  # -------------------------------------------------------------------------------------------
+  # Monitoring (local inspection; do not publish without authentication)
+  # -------------------------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    <<: *hardened
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=1GB
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    networks: [monitoring]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+      start_interval: 2s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    <<: *hardened
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is not set. See .env.example.}
+      # The provisioned dashboard can be viewed without signing in (port bound to 127.0.0.1);
+      # changing anything needs the admin account.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/root-cause-platform.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_LOG_MODE: console
+      GF_LOG_CONSOLE_FORMAT: json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    networks: [monitoring]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+      start_interval: 3s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+# The dashboard proxy reaches only the application services; only the application services reach
+# PostgreSQL and Kafka; Prometheus and Grafana see only the services' metrics endpoints.
+networks:
+  frontend:
+  backend:
+  monitoring:
+
+# Data survives `docker compose down` and is deleted only by `docker compose down -v`.
 volumes:
   postgres-data:
   kafka-data:
+  prometheus-data:
+  grafana-data:

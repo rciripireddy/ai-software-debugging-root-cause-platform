@@ -3,6 +3,7 @@
 from datetime import timedelta
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,8 @@ class Settings(BaseSettings):
 
     log_format: Literal["text", "json"] = "text"
     log_level: str = "INFO"
+    # Written to every log line as service.environment (the same variable as the Java services).
+    app_environment: str = "local"
 
     @property
     def database_conninfo(self) -> str:
@@ -66,6 +69,54 @@ class Settings(BaseSettings):
             connect_timeout=max(1, int(self.db_connect_timeout.total_seconds())),
             application_name="analysis-service",
         )
+
+
+MIN_SECRET_BYTES = 32
+
+
+class ConfigurationError(RuntimeError):
+    """Critical settings are missing or invalid; the service does not start."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("Invalid configuration: " + "; ".join(problems))
+        self.problems = problems
+
+
+def configuration_problems(settings: Settings) -> list[str]:
+    """Problems with the settings the service cannot work without. The messages name the
+    environment variable but never contain its value."""
+    problems = []
+    if not settings.db_host.strip():
+        problems.append("DB_HOST must be set")
+    if not 1 <= settings.db_port <= 65_535:
+        problems.append("DB_PORT must be a port number")
+    if not settings.db_name.strip():
+        problems.append("DB_NAME must be set")
+    if not settings.db_password.get_secret_value():
+        problems.append("DB_PASSWORD must be set")
+    for variable, url in (
+        ("INCIDENT_SERVICE_URL", settings.incident_service_url),
+        ("INGESTION_SERVICE_URL", settings.ingestion_service_url),
+    ):
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            problems.append(f"{variable} must be an http(s) URL such as http://host:port")
+    for variable, secret in (
+        ("AUTH_JWT_SECRET", settings.auth_jwt_secret),
+        ("INTERNAL_SERVICE_TOKEN", settings.internal_service_token),
+    ):
+        if len(secret.get_secret_value().encode("utf-8")) < MIN_SECRET_BYTES:
+            problems.append(
+                f"{variable} must be set to a random value of at least {MIN_SECRET_BYTES} "
+                "characters (see .env.example)"
+            )
+    return problems
+
+
+def validate_settings(settings: Settings) -> None:
+    problems = configuration_problems(settings)
+    if problems:
+        raise ConfigurationError(problems)
 
 
 @lru_cache

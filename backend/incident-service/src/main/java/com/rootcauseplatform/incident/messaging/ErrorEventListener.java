@@ -11,6 +11,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import com.rootcauseplatform.incident.logging.CorrelationIdFilter;
+import com.rootcauseplatform.incident.monitoring.EventProcessingMetrics;
 import com.rootcauseplatform.incident.service.IncidentCorrelationService;
 import com.rootcauseplatform.incident.service.IncidentCorrelationService.CorrelationResult;
 
@@ -26,10 +27,13 @@ public class ErrorEventListener {
 
     private final ErrorEventMessageReader reader;
     private final IncidentCorrelationService correlationService;
+    private final EventProcessingMetrics metrics;
 
-    public ErrorEventListener(ErrorEventMessageReader reader, IncidentCorrelationService correlationService) {
+    public ErrorEventListener(ErrorEventMessageReader reader, IncidentCorrelationService correlationService,
+            EventProcessingMetrics metrics) {
         this.reader = reader;
         this.correlationService = correlationService;
+        this.metrics = metrics;
     }
 
     /** The consumer group is {@code spring.kafka.consumer.group-id}, not the listener ID. */
@@ -42,6 +46,7 @@ public class ErrorEventListener {
         try {
             ErrorEventMessage message = reader.read(record.value());
             CorrelationResult result = correlationService.correlate(message);
+            metrics.consumed(result.outcome());
             log.atInfo()
                     .setMessage("Error event processed")
                     .addKeyValue("action", "event.correlate")

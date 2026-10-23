@@ -13,20 +13,26 @@ no external AI service. Results are stored as revisions in the `analysis` schema
 
 ```text
 src/analysis_service/
-├── api/            routes, problem details, correlation ID middleware
+├── api/            routes, problem details, correlation ID and metrics middleware
 ├── services/       load incident data, run the engine, store results
 ├── analysis/       the engine (pure functions): normalization, stacktrace, features,
 │                   classification, temporal, similarity, candidates, confidence, engine
 ├── clients/        read-only clients for the incident and ingestion APIs
 ├── repositories/   connection pool, SQL migrations (migrations/V*.sql), analysis storage
 ├── models/         input records and result model
-├── config.py       environment variables
+├── config.py       environment variables and their startup validation
+├── metrics.py      Prometheus metrics (GET /metrics)
 ├── logging_config.py
 ├── main.py         application factory
 └── __main__.py     `python -m analysis_service` (uvicorn with the service's logging)
 evaluation/         evaluation on the labelled synthetic scenarios (not in the image)
 tests/
+requirements.lock   exact dependency versions installed in the Docker image
 ```
+
+The Docker image installs the versions in `requirements.lock` (multi-stage build, non-root
+user). After changing dependencies in `pyproject.toml`, regenerate the file with the command in
+its header so local tests and the image keep using the same versions.
 
 ## Local development
 

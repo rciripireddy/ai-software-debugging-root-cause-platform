@@ -24,6 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.rootcauseplatform.ingestion.logging.CorrelationIdFilter;
 import com.rootcauseplatform.ingestion.messaging.ErrorEventCreated;
 import com.rootcauseplatform.ingestion.messaging.EventHeaders;
+import com.rootcauseplatform.ingestion.monitoring.IngestionMetrics;
 
 /**
  * Sends pending outbox messages to Kafka. A message is marked published only after Kafka has
@@ -42,13 +43,15 @@ public class OutboxPublisher {
     private final KafkaOperations<String, String> kafka;
     private final OutboxProperties properties;
     private final TransactionTemplate transactionTemplate;
+    private final IngestionMetrics metrics;
 
     public OutboxPublisher(OutboxEventRepository outbox, KafkaOperations<String, String> kafka,
-            OutboxProperties properties, PlatformTransactionManager transactionManager) {
+            OutboxProperties properties, PlatformTransactionManager transactionManager, IngestionMetrics metrics) {
         this.outbox = outbox;
         this.kafka = kafka;
         this.properties = properties;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.metrics = metrics;
     }
 
     /**
@@ -82,6 +85,7 @@ public class OutboxPublisher {
             RecordMetadata metadata = send(event).get(properties.sendTimeout().toMillis(), TimeUnit.MILLISECONDS)
                     .getRecordMetadata();
             event.markPublished(Instant.now());
+            metrics.outboxMessagePublished();
             log.atInfo()
                     .setMessage("Outbox message published")
                     .addKeyValue("action", "outbox.publish")
@@ -128,6 +132,7 @@ public class OutboxPublisher {
         Throwable cause = NestedExceptionUtils.getMostSpecificCause(exception);
         String error = cause.getClass().getSimpleName() + ": " + cause.getMessage();
         event.markFailed(now, error, now.plus(properties.backoffAfter(event.getAttemptCount() + 1)));
+        metrics.outboxPublishFailed();
 
         boolean alert = event.getAttemptCount() % properties.alertEveryAttempts() == 0;
         (alert ? log.atError() : log.atWarn())

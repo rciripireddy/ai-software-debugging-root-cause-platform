@@ -22,6 +22,13 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
             FOR UPDATE SKIP LOCKED""")
     List<OutboxEvent> lockDueBatch(Instant now, int limit);
 
+    @Query("select count(o) from OutboxEvent o where o.publishedAt is null")
+    long countPending();
+
+    /** Creation time of the oldest unpublished message, or {@code null} when there is none. */
+    @Query("select min(o.createdAt) from OutboxEvent o where o.publishedAt is null")
+    Instant oldestPendingCreatedAt();
+
     @Modifying
     @Query("delete from OutboxEvent o where o.publishedAt < :cutoff")
     int deletePublishedBefore(Instant cutoff);

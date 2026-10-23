@@ -47,6 +47,31 @@ class IncidentServiceApplicationTests {
     }
 
     @Test
+    void prometheusMetricsAreAvailableWithoutCredentials() {
+        api.get("/api/v1/incidents"); // at least one recorded API request
+
+        ApiClient.Response response = new ApiClient(port).get("/actuator/prometheus");
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(response.body())
+                .contains("rcp_events_consumed_total{outcome=\"incident_created\"}")
+                .contains("rcp_events_dead_lettered_total")
+                .contains("http_server_requests_seconds_bucket{")
+                .contains("uri=\"/api/v1/incidents\"")
+                .contains("hikaricp_connections_active")
+                .contains("jvm_memory_used_bytes");
+    }
+
+    @Test
+    void onlyHealthInfoAndMetricsEndpointsAreExposed() {
+        ApiClient anonymous = new ApiClient(port);
+
+        for (String endpoint : new String[] {"env", "configprops", "beans", "loggers", "heapdump", "threaddump"}) {
+            assertThat(anonymous.get("/actuator/" + endpoint).status()).as(endpoint).isIn(401, 403, 404);
+        }
+    }
+
+    @Test
     void infoEndpointIdentifiesService() {
         ApiClient.Response response = api.get("/actuator/info");
 

@@ -82,6 +82,9 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**", "/actuator/info")
                         .permitAll()
+                        // Scraped by Prometheus on the internal network; the dashboard proxy does
+                        // not route it and production-style Compose does not publish the port.
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/logs").hasRole(CallerPrincipal.LOG_PRODUCER_ROLE)
                         .requestMatchers(HttpMethod.GET, "/api/v1/logs", "/api/v1/logs/**", "/api/v1/applications")
                         .hasAnyRole("ADMIN", "VIEWER", CallerPrincipal.SERVICE_ROLE)

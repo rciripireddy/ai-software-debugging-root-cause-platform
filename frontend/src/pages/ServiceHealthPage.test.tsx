@@ -40,7 +40,7 @@ describe('ServiceHealthPage', () => {
     expect(await within(incident).findByText('Unhealthy')).toBeInTheDocument()
     expect(await within(analysis).findByText('Unreachable')).toBeInTheDocument()
     expect(within(analysis).getByText('Failed to fetch')).toBeInTheDocument()
-    expect(within(ingestion).getByText('/api/ingestion/actuator/health')).toBeInTheDocument()
+    expect(within(ingestion).getByText('/api/ingestion/actuator/health/readiness')).toBeInTheDocument()
     expect(await screen.findByText('1 of 3 services healthy')).toBeInTheDocument()
   })
 
@@ -61,13 +61,13 @@ describe('ServiceHealthPage', () => {
 
   it('does not depend on the other APIs', async () => {
     const fetchMock = vi.fn((path: string) =>
-      path.endsWith('/health') ? Promise.resolve(healthResponse('UP')) : Promise.reject(new TypeError('unexpected')),
+      path.endsWith('/readiness') ? Promise.resolve(healthResponse('UP')) : Promise.reject(new TypeError('unexpected')),
     )
     vi.stubGlobal('fetch', fetchMock)
 
     renderRoute('/health', httpApi())
     await screen.findAllByText('Healthy')
 
-    expect(fetchMock.mock.calls.every(([path]) => path.endsWith('/health'))).toBe(true)
+    expect(fetchMock.mock.calls.every(([path]) => path.endsWith('/health/readiness'))).toBe(true)
   })
 })

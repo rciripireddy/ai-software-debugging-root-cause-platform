@@ -41,6 +41,10 @@ class CorrelationIdFilter(logging.Filter):
 
 
 class EcsJsonFormatter(logging.Formatter):
+    def __init__(self, environment: str = "local") -> None:
+        super().__init__()
+        self._environment = environment
+
     def format(self, record: logging.LogRecord) -> str:
         document: dict[str, object] = {
             "@timestamp": datetime.fromtimestamp(record.created, UTC)
@@ -51,6 +55,7 @@ class EcsJsonFormatter(logging.Formatter):
             "process.thread.name": record.threadName,
             "service.name": SERVICE_NAME,
             "service.version": __version__,
+            "service.environment": self._environment,
             "log.logger": record.name,
             "message": record.getMessage(),
             "ecs.version": "8.11",
@@ -78,7 +83,9 @@ class KeyValueTextFormatter(logging.Formatter):
         return text
 
 
-def configure_logging(log_format: str = "text", level: str = "INFO") -> None:
+def configure_logging(
+    log_format: str = "text", level: str = "INFO", environment: str = "local"
+) -> None:
     formatter = "json" if log_format == "json" else "text"
     logging.config.dictConfig(
         {
@@ -86,7 +93,7 @@ def configure_logging(log_format: str = "text", level: str = "INFO") -> None:
             "disable_existing_loggers": False,
             "filters": {"correlation": {"()": CorrelationIdFilter}},
             "formatters": {
-                "json": {"()": EcsJsonFormatter},
+                "json": {"()": EcsJsonFormatter, "environment": environment},
                 "text": {"()": KeyValueTextFormatter},
             },
             "handlers": {

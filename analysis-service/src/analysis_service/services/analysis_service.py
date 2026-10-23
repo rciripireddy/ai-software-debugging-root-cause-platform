@@ -8,6 +8,7 @@ from uuid import UUID
 
 from analysis_service.analysis import engine
 from analysis_service.analysis.engine import AnalysisSettings
+from analysis_service.metrics import Metrics
 from analysis_service.models.analysis import (
     AnalysisHistory,
     IncidentAnalysis,
@@ -32,11 +33,13 @@ class AnalysisService:
         loader: IncidentLoader,
         repository: AnalysisRepository,
         settings: AnalysisSettings,
+        metrics: Metrics | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._loader = loader
         self._repository = repository
         self._settings = settings
+        self._metrics = metrics or Metrics()
         self._clock = clock
 
     async def analyze(self, incident_id: UUID) -> IncidentAnalysis:
@@ -51,8 +54,10 @@ class AnalysisService:
             report = engine.analyze(target, pool, self._settings, self._clock())
             stored = await self._repository.save(report)
         except IncidentNotFoundError:
+            self._metrics.analysis_finished("not_found")
             raise  # reported by the API as 404
         except Exception as exc:
+            self._metrics.analysis_finished("failed", time.perf_counter() - started)
             log.warning(
                 "Incident analysis failed",
                 extra={
@@ -64,6 +69,7 @@ class AnalysisService:
             )
             raise
 
+        self._metrics.analysis_finished("success", time.perf_counter() - started)
         primary = stored.primary_candidate
         log.info(
             "Incident analysis completed",

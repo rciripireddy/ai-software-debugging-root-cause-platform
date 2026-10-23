@@ -19,6 +19,8 @@ import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.ListenerExecutionFailedException;
 import org.springframework.util.backoff.ExponentialBackOff;
 
+import com.rootcauseplatform.incident.monitoring.EventProcessingMetrics;
+
 /**
  * Topics and failure handling for the error-event consumer.
  *
@@ -44,7 +46,7 @@ public class KafkaConsumerConfiguration {
 
     @Bean
     DefaultErrorHandler errorEventErrorHandler(KafkaOperations<String, String> kafka, KafkaTopicProperties topics,
-            ConsumerRetryProperties retry) {
+            ConsumerRetryProperties retry, EventProcessingMetrics metrics) {
         DeadLetterPublishingRecoverer deadLetters = new DeadLetterPublishingRecoverer(kafka,
                 (record, exception) -> new TopicPartition(topics.errorEventsDlt(), record.partition()));
 
@@ -54,17 +56,20 @@ public class KafkaConsumerConfiguration {
 
         DefaultErrorHandler errorHandler = new DefaultErrorHandler((record, exception) -> {
             deadLetters.accept(record, exception);
+            metrics.deadLettered();
             logFailure(log.atError(), "Message sent to dead-letter topic", record, exception)
                     .addKeyValue("action", "event.dead_letter")
                     .addKeyValue("deadLetterTopic", topics.errorEventsDlt())
                     .log();
         }, backOff);
         errorHandler.addNotRetryableExceptions(InvalidEventException.class);
-        errorHandler.setRetryListeners((record, exception, deliveryAttempt) ->
-                logFailure(log.atWarn(), "Message processing failed", record, exception)
-                        .addKeyValue("action", "event.process_failed")
-                        .addKeyValue("deliveryAttempt", deliveryAttempt)
-                        .log());
+        errorHandler.setRetryListeners((record, exception, deliveryAttempt) -> {
+            metrics.retried();
+            logFailure(log.atWarn(), "Message processing failed", record, exception)
+                    .addKeyValue("action", "event.process_failed")
+                    .addKeyValue("deliveryAttempt", deliveryAttempt)
+                    .log();
+        });
         // The structured log lines above replace the framework's own logging and stack traces.
         errorHandler.setLogLevel(KafkaException.Level.DEBUG);
         return errorHandler;

@@ -47,6 +47,10 @@ import com.rootcauseplatform.ingestion.TestcontainersConfiguration;
 import com.rootcauseplatform.ingestion.domain.Severity;
 import com.rootcauseplatform.ingestion.messaging.ErrorEventCreated;
 import com.rootcauseplatform.ingestion.messaging.KafkaTopicProperties;
+import com.rootcauseplatform.ingestion.monitoring.IngestionMetrics;
+import com.rootcauseplatform.ingestion.monitoring.OutboxBacklogMetrics;
+
+import io.micrometer.core.instrument.MeterRegistry;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -87,6 +91,15 @@ class OutboxIntegrationTests {
 
     @Autowired
     private KafkaContainer kafkaContainer;
+
+    @Autowired
+    private IngestionMetrics metrics;
+
+    @Autowired
+    private OutboxBacklogMetrics backlogMetrics;
+
+    @Autowired
+    private MeterRegistry registry;
 
     private ApiClient api;
 
@@ -203,6 +216,52 @@ class OutboxIntegrationTests {
     }
 
     @Test
+    void metricsFollowAcceptedEventsTheBacklogAndPublishingOutcomes() {
+        double acceptedBefore = counter("rcp.ingestion.events.accepted", "severity", "error");
+        double publishedBefore = counter("rcp.outbox.published");
+        double failuresBefore = counter("rcp.outbox.publish.failures");
+
+        String first = ingest("outbox-metrics");
+        ingest("outbox-metrics");
+        backlogMetrics.refresh();
+
+        assertThat(counter("rcp.ingestion.events.accepted", "severity", "error")).isEqualTo(acceptedBefore + 2);
+        assertThat(gauge("rcp.outbox.pending.messages")).isEqualTo(2);
+        assertThat(gauge("rcp.outbox.oldest.pending.age")).isGreaterThanOrEqualTo(0);
+
+        failingPublisher().publishDueBatch();
+        assertThat(counter("rcp.outbox.publish.failures")).isEqualTo(failuresBefore + 1);
+
+        // The second message is due; the first waits for its backoff delay.
+        assertThat(publisher.publishDueBatch()).isEqualTo(1);
+        jdbcTemplate.update("update ingestion.outbox_events set next_attempt_at = now() - interval '1 minute' "
+                + "where aggregate_id = ?::uuid", first);
+        assertThat(publisher.publishDueBatch()).isEqualTo(1);
+        backlogMetrics.refresh();
+
+        assertThat(counter("rcp.outbox.published")).isEqualTo(publishedBefore + 2);
+        assertThat(gauge("rcp.outbox.pending.messages")).isZero();
+        assertThat(gauge("rcp.outbox.oldest.pending.age")).isZero();
+    }
+
+    @Test
+    void prometheusEndpointExportsTheMetricsWithoutIdentifiersInLabels() {
+        String eventId = ingest("outbox-scrape");
+
+        // Anonymous, like Prometheus.
+        ApiClient.Response response = new ApiClient(port).get("/actuator/prometheus");
+
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(response.body())
+                .contains("rcp_ingestion_events_accepted_total{severity=\"error\"}")
+                .contains("rcp_outbox_pending_messages")
+                .contains("rcp_outbox_oldest_pending_age_seconds")
+                .contains("http_server_requests_seconds_bucket")
+                .contains("hikaricp_connections_active")
+                .doesNotContain(eventId);
+    }
+
+    @Test
     void stopsTheBatchAtTheFirstFailure() {
         List<String> eventIds = List.of(ingest("outbox-batch"), ingest("outbox-batch"), ingest("outbox-batch"));
 
@@ -226,7 +285,15 @@ class OutboxIntegrationTests {
         KafkaOperations<String, String> unavailableKafka = mock(KafkaOperations.class);
         when(unavailableKafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.failedFuture(new TimeoutException("Kafka is unavailable")));
-        return new OutboxPublisher(outboxRepository, unavailableKafka, outboxProperties, transactionManager);
+        return new OutboxPublisher(outboxRepository, unavailableKafka, outboxProperties, transactionManager, metrics);
+    }
+
+    private double counter(String name, String... tags) {
+        return registry.get(name).tags(tags).counter().count();
+    }
+
+    private double gauge(String name) {
+        return registry.get(name).gauge().value();
     }
 
     private String ingest(String application) {

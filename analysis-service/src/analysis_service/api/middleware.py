@@ -1,4 +1,5 @@
-"""Correlation ID handling, one log line per API request, and security response headers."""
+"""Request metrics, correlation ID handling, one log line per API request, and security
+response headers."""
 
 import logging
 import re
@@ -53,6 +54,28 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             return response
         finally:
             correlation_id.reset(token)
+
+
+class HttpMetricsMiddleware(BaseHTTPMiddleware):
+    """Records every request in ``http_server_requests_seconds``. The ``uri`` label is the matched
+    route template (e.g. ``/api/v1/analysis/incidents/{incidentId}``), never the requested path,
+    so the number of series stays small."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        started = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            route = request.scope.get("route")
+            request.app.state.metrics.observe_request(
+                request.method,
+                getattr(route, "path", None),
+                status,
+                time.perf_counter() - started,
+            )
 
 
 # The interactive API docs load Swagger UI / ReDoc from a CDN, so they keep the default policy.

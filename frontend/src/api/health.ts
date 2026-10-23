@@ -1,6 +1,8 @@
 import type { HealthResult } from '../types/api'
 import type { MonitoredService } from './dashboardApi'
 
+// Readiness endpoints: "healthy" means the service can do its work (its database is reachable),
+// not only that the process is running.
 export function monitoredServices(base: { ingestion: string; incident: string; analysis: string }): MonitoredService[] {
   return [
     {
@@ -8,21 +10,21 @@ export function monitoredServices(base: { ingestion: string; incident: string; a
       name: 'Ingestion Service',
       runtime: 'Java 21 · Spring Boot',
       description: 'Receives and stores log and error events and publishes them to Kafka.',
-      healthPath: `${base.ingestion}/actuator/health`,
+      healthPath: `${base.ingestion}/actuator/health/readiness`,
     },
     {
       id: 'incident-service',
       name: 'Incident Service',
       runtime: 'Java 21 · Spring Boot',
       description: 'Correlates error events from Kafka into incidents and serves them.',
-      healthPath: `${base.incident}/actuator/health`,
+      healthPath: `${base.incident}/actuator/health/readiness`,
     },
     {
       id: 'analysis-service',
       name: 'Analysis Service',
       runtime: 'Python · FastAPI',
       description: 'Analyzes incidents and suggests potential root causes with evidence.',
-      healthPath: `${base.analysis}/health`,
+      healthPath: `${base.analysis}/health/readiness`,
     },
   ]
 }

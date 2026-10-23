@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from analysis_service import __version__
 from analysis_service.api.security import Caller, RateLimited, authenticate, require_admin
 from analysis_service.logging_config import SERVICE_NAME
+from analysis_service.metrics import CONTENT_TYPE_LATEST
 from analysis_service.models.analysis import (
     AnalysisHistory,
     IncidentAnalysis,
@@ -23,6 +24,9 @@ router = APIRouter(
     prefix="/api/v1/analysis", tags=["analysis"], dependencies=[Depends(authenticate)]
 )
 health_router = APIRouter(tags=["health"])
+# Scraped by Prometheus on the internal network; not routed by the dashboard proxy and not part of
+# the public API documentation.
+metrics_router = APIRouter(include_in_schema=False)
 
 _ERRORS = {
     400: {"description": "Invalid incident ID or query parameter"},
@@ -123,8 +127,16 @@ async def related_incidents(incident_id: IncidentId, request: Request) -> Relate
 
 
 @health_router.get("/health", summary="Liveness: the process is running")
+@health_router.get("/health/liveness", summary="Liveness: the process is running (probe path)")
 def health() -> dict[str, str]:
+    """Never checks dependencies: a database or incident-service outage must not get a working
+    process restarted. See /health/readiness."""
     return {"status": "UP", "service": SERVICE_NAME, "version": __version__}
+
+
+@metrics_router.get("/metrics")
+def metrics(request: Request) -> Response:
+    return Response(request.app.state.metrics.exposition(), media_type=CONTENT_TYPE_LATEST)
 
 
 @health_router.get("/health/readiness", summary="Readiness: the database is reachable")

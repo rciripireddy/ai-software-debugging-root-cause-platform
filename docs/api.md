@@ -34,7 +34,8 @@ until they expire (60 minutes by default). Users have the role `VIEWER` (read ev
 | `POST /api/v1/incidents` (deprecated) | | | yes | | |
 | `GET /api/v1/analysis/**` | | yes | yes | | |
 | `POST /api/v1/analysis/incidents/{incidentId}` | | | yes | | |
-| `/actuator/health/**`, `/actuator/info`, `/health`, `/health/readiness` | yes | | | | |
+| `/actuator/health/**`, `/actuator/info`, `/health`, `/health/liveness`, `/health/readiness` | yes | | | | |
+| `/actuator/prometheus`, `/metrics` (internal network only, see below) | yes | | | | |
 
 Everything not listed is denied. A missing, malformed, wrongly signed or expired credential gives
 `401` (title `Session expired` for an expired token, otherwise `Authentication required`, with a
@@ -777,7 +778,13 @@ Related incidents, computed on request and **not stored**, with the same scoring
 
 | Endpoint | Meaning |
 | --- | --- |
-| `GET /health` | Liveness: the process is running. Does not check dependencies |
+| `GET /health`, `GET /health/liveness` | Liveness: the process is running. Does not check dependencies |
 | `GET /health/readiness` | Readiness: `200` when the database is reachable, otherwise `503` with `"checks": {"database": "DOWN"}` |
+| `GET /metrics` | Prometheus metrics (not in the OpenAPI document) |
+
+Metrics endpoints (`/actuator/prometheus` on the Spring Boot services, `/metrics` here) need no
+credentials but are meant for Prometheus on the internal Docker network: the dashboard proxy
+answers `404` for them and the production-style Compose setup does not publish the service ports.
+Metric names and labels: [operations.md](operations.md#metrics).
 
 Interactive OpenAPI documentation: <http://localhost:8000/docs>.

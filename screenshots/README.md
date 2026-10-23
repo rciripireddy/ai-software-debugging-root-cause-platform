@@ -21,6 +21,7 @@ ingestion API, correlated by Kafka and analyzed by the analysis service. All eve
 | `overview-signed-in.png` | Overview signed in as an ADMIN, with the account area in the sidebar | 1440 px |
 | `overview-signed-in-mobile.png` | Overview signed in as a VIEWER, navigation menu open | 390 px |
 | `root-cause-analysis-viewer.png` | Root Cause Analysis as a VIEWER: the stored analysis without the run button | 1440 px |
+| `grafana-dashboard.png` | Grafana *Root Cause Platform* dashboard (Phase 7) after the failure and recovery tests: the 5xx and outbox peaks are the database and Kafka outages | 1440 px |
 
 All screenshots were retaken on 2026-10-22 after the dashboard's layout and typography were
 simplified, signed in with local development accounts; they show no passwords or tokens (the

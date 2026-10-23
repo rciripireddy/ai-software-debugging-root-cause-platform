@@ -16,6 +16,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param maxBackoff upper limit for the retry delay
  * @param alertEveryAttempts log at ERROR level every this many failed attempts of one message
  * @param retention how long published messages are kept before they are deleted
+ * @param metricsRefreshInterval how often the outbox backlog metrics are read from the database
  */
 @ConfigurationProperties("app.outbox")
 public record OutboxProperties(
@@ -26,7 +27,8 @@ public record OutboxProperties(
         @DefaultValue("1s") Duration initialBackoff,
         @DefaultValue("60s") Duration maxBackoff,
         @DefaultValue("10") int alertEveryAttempts,
-        @DefaultValue("7d") Duration retention) {
+        @DefaultValue("7d") Duration retention,
+        @DefaultValue("15s") Duration metricsRefreshInterval) {
 
     /** Delay before the next attempt after {@code attempts} failed attempts (1, 2, 4, ... seconds, capped). */
     Duration backoffAfter(int attempts) {

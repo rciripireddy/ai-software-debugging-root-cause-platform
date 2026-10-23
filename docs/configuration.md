@@ -10,21 +10,30 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 ```
 
 `.env` is listed in `.gitignore` and must not be committed. `POSTGRES_PASSWORD`,
-`AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN` and `INGESTION_API_KEY` have no default: Compose
-refuses to start until they are set.
+`AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN`, `INGESTION_API_KEY` and `GRAFANA_ADMIN_PASSWORD`
+have no default: Compose refuses to start until they are set.
+
+All host ports are bound to `127.0.0.1`. The dashboard, Prometheus and Grafana ports are
+published by `docker-compose.yml`; the service, PostgreSQL and Kafka ports only by
+`docker-compose.override.yml` (development, loaded automatically). See
+[operations.md](operations.md#ports).
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `POSTGRES_DB` | `rootcause` | Database created on first start |
 | `POSTGRES_USER` | `rootcause` | Database superuser for local development |
 | `POSTGRES_PASSWORD` | *(required)* | Password for `POSTGRES_USER` |
-| `POSTGRES_PORT` | `5432` | Host port for PostgreSQL |
+| `POSTGRES_PORT` | `5432` | Host port for PostgreSQL (development) |
 | `KAFKA_CLUSTER_ID` | example ID | Base64 UUID identifying the KRaft cluster |
-| `KAFKA_EXTERNAL_PORT` | `9092` | Host port for Kafka clients outside Docker |
-| `INGESTION_SERVICE_PORT` | `8081` | Host port for the ingestion service |
-| `INCIDENT_SERVICE_PORT` | `8082` | Host port for the incident service |
-| `ANALYSIS_SERVICE_PORT` | `8000` | Host port for the analysis service |
+| `KAFKA_EXTERNAL_PORT` | `9092` | Host port for Kafka clients outside Docker (development) |
+| `INGESTION_SERVICE_PORT` | `8081` | Host port for the ingestion service (development) |
+| `INCIDENT_SERVICE_PORT` | `8082` | Host port for the incident service (development) |
+| `ANALYSIS_SERVICE_PORT` | `8000` | Host port for the analysis service (development) |
 | `FRONTEND_PORT` | `3000` | Host port for the dashboard |
+| `PROMETHEUS_PORT` | `9090` | Host port for Prometheus |
+| `GRAFANA_PORT` | `3001` | Host port for Grafana |
+| `GRAFANA_ADMIN_PASSWORD` | *(required)* | Password of Grafana's `admin` account (the dashboard can be viewed without signing in) |
+| `APP_ENVIRONMENT` | `local` | Written to every log line of the three services as `service.environment` |
 | `AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN`, `INGESTION_API_KEY` | *(required)* | See [Authentication](#authentication) |
 | `AUTH_BOOTSTRAP_*`, `AUTH_TOKEN_TTL`, `AUTH_COOKIE_SECURE`, rate limits | see below | See [Authentication](#authentication) |
 
@@ -79,6 +88,7 @@ Both Spring Boot services read these environment variables. Docker Compose sets 
 | `DB_PASSWORD` | *(empty)* | Database password. No default is stored in source files |
 | `SERVER_PORT` | `8081` / `8082` | HTTP port of ingestion-service / incident-service |
 | `LOGGING_STRUCTURED_FORMAT_CONSOLE` | *(unset)* | `ecs` for JSON logs. Docker Compose sets it; unset gives plain-text logs |
+| `APP_ENVIRONMENT` | `local` | `service.environment` in the JSON logs |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka brokers (`kafka:29092` inside Docker Compose) |
 | `KAFKA_TOPIC_ERROR_EVENTS` | `error-events.v1` | Topic for `ErrorEventCreated` messages |
 | `KAFKA_TOPIC_PARTITIONS` | `3` | Partitions used when the services create the topics |
@@ -94,8 +104,20 @@ Other settings in each `application.yml`:
   changes the schema itself.
 - The connection pool waits at most 5 seconds for a database connection, so an unreachable
   database is reported quickly: API calls return `503` and readiness reports `DOWN`.
-- Actuator exposes only `health` and `info`, both public. The readiness group includes the
-  database check, but not Kafka (see [architecture.md](architecture.md#health-checks)).
+- At startup Flyway retries the database connection 12 times, up to 10 seconds apart
+  (`spring.flyway.connect-retries`), so a database that is still starting delays the service
+  instead of stopping it.
+- Before that, critical settings are checked (database address, `KAFKA_BOOTSTRAP_SERVERS`,
+  `SERVER_PORT`, secrets); invalid ones stop the service with a list naming the variables
+  ([operations.md](operations.md#configuration-validation)).
+- Actuator exposes only `health`, `info` and `prometheus`, all without credentials; the dashboard
+  proxy blocks `prometheus` (see [operations.md](operations.md#metrics)). Liveness includes only
+  the application state, readiness also the database, neither Kafka
+  ([operations.md](operations.md#health-model)). HTTP latency histograms use fixed buckets
+  (`management.metrics.distribution.slo`).
+- Graceful shutdown (`server.shutdown: graceful`): in-flight requests and the Kafka listener get
+  up to 20 s per phase (`spring.lifecycle.timeout-per-shutdown-phase`), a running scheduled task
+  (outbox batch) up to 10 s.
 - Spring Boot's generated default user is disabled; requests are authenticated by the platform's
   own filter (see [security.md](security.md)).
 - `server.forward-headers-strategy: native`: the client address and scheme come from
@@ -112,6 +134,7 @@ Other settings in each `application.yml`:
 | `initial-backoff` / `max-backoff` | `1s` / `60s` | Retry delay after a failed send, doubling per attempt |
 | `alert-every-attempts` | `10` | Log at `ERROR` every this many failed attempts of one message |
 | `retention` | `7d` | Delete published outbox rows after this time |
+| `metrics-refresh-interval` | `15s` | How often the outbox backlog metrics are read from the database |
 
 The Kafka producer uses `acks=all` with idempotence enabled, and short client timeouts
 (`max.block.ms` 5 s, `delivery.timeout.ms` 10 s) so a Kafka outage is detected quickly; the
@@ -124,6 +147,8 @@ outbox, not the producer, retries over longer periods.
 | `spring.kafka.consumer.group-id` | `incident-service` | Consumer group |
 | `spring.kafka.consumer.auto-offset-reset` | `earliest` | A new group starts with the oldest retained message |
 | `spring.kafka.listener.ack-mode` | `record` | Offsets are committed after each processed message |
+| `spring.kafka.listener.auto-startup` | `false` | The listener is started once the application is ready, by `KafkaListenerStarter` |
+| `app.kafka.consumer.start-retry-interval` | `10s` | Retry interval for starting the listener while Kafka is unreachable |
 | `app.kafka.consumer.retry.max-retries` | `3` | Retries after a failed attempt before dead-lettering |
 | `app.kafka.consumer.retry.initial-interval` / `multiplier` / `max-interval` | `1s` / `2.0` / `10s` | Retry backoff |
 
@@ -150,8 +175,13 @@ Durations accept seconds (`120`) or ISO-8601 (`PT2M`).
 | `ANALYSIS_RELATED_THRESHOLD` | `40` | Minimum similarity score for a related incident (1–100) |
 | `AUTH_JWT_SECRET`, `INTERNAL_SERVICE_TOKEN`, `ANALYSIS_RATE_LIMIT_PER_MINUTE` | see [Authentication](#authentication) | Token verification, calls to the other services, analyses per user and minute |
 | `LOG_FORMAT` | `text` | `json` for one ECS JSON object per line |
+| `APP_ENVIRONMENT` | `local` | `service.environment` in the JSON logs |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `SERVER_HOST` / `SERVER_PORT` | `0.0.0.0` / `8000` | Listen address |
+
+At startup the database settings, `DB_PASSWORD`, both service URLs (http/https) and the two
+secrets are checked; invalid values stop the service (exit code 2) with a log line naming the
+variables, never their values.
 
 The `ANALYSIS_*` windows and threshold change results for the same input. `analysisVersion`
 identifies the rules in the code, not these settings, so stored analyses made with non-default

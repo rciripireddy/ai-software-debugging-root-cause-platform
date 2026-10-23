@@ -1,0 +1,44 @@
+# Alert rules, shown on Prometheus' Alerts page (http://localhost:9090/alerts). No Alertmanager
+# is configured: the rules document what "unhealthy" means for this platform, they do not notify.
+
+groups:
+  - name: root-cause-platform
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"ingestion-service|incident-service|analysis-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} cannot be scraped"
+          description: "Prometheus has not reached {{ $labels.job }} for at least one minute."
+
+      - alert: OutboxBacklogAging
+        expr: rcp_outbox_oldest_pending_age_seconds > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Events are waiting in the outbox"
+          description: >-
+            The oldest unpublished event is {{ $value | humanizeDuration }} old. Events are stored
+            safely, but incidents are not updated until Kafka is reachable again.
+
+      - alert: EventsDeadLettered
+        expr: increase(rcp_events_dead_lettered_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Error events were sent to the dead-letter topic"
+          description: "incident-service could not process {{ $value }} event(s) in the last 15 minutes."
+
+      - alert: HighServerErrorRate
+        expr: >-
+          sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+            / sum by (job) (rate(http_server_requests_seconds_count[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} answers more than 5% of requests with a server error"
+          description: "Check the service's logs for the correlation IDs of the failed requests."

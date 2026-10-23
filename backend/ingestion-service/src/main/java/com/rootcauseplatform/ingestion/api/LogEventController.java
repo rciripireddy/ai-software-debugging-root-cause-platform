@@ -23,6 +23,7 @@ import com.rootcauseplatform.ingestion.api.EventQueryResponses.EventSummary;
 import com.rootcauseplatform.ingestion.api.EventQueryResponses.PageResponse;
 import com.rootcauseplatform.ingestion.domain.ErrorEvent;
 import com.rootcauseplatform.ingestion.domain.Severity;
+import com.rootcauseplatform.ingestion.monitoring.IngestionMetrics;
 import com.rootcauseplatform.ingestion.security.FixedWindowRateLimiter;
 import com.rootcauseplatform.ingestion.service.EventFilter;
 import com.rootcauseplatform.ingestion.service.EventQueryService;
@@ -44,13 +45,15 @@ public class LogEventController {
     private final EventQueryService queryService;
     private final JsonMapper jsonMapper;
     private final FixedWindowRateLimiter ingestRateLimiter;
+    private final IngestionMetrics metrics;
 
     public LogEventController(LogIngestionService ingestionService, EventQueryService queryService,
             JsonMapper jsonMapper, @Value("${app.ingestion.rate-limit-per-minute}") int ingestLimitPerMinute,
-            Clock clock) {
+            Clock clock, IngestionMetrics metrics) {
         this.ingestionService = ingestionService;
         this.queryService = queryService;
         this.jsonMapper = jsonMapper;
+        this.metrics = metrics;
         this.ingestRateLimiter = new FixedWindowRateLimiter(ingestLimitPerMinute, Duration.ofMinutes(1), clock);
     }
 
@@ -82,6 +85,8 @@ public class LogEventController {
             throw new RateLimitExceededException("Too many events from this client. Retry later.", wait);
         }
         ErrorEvent event = ingestionService.ingest(request);
+        // Counted after the transaction has committed: the event and its outbox message are stored.
+        metrics.eventAccepted(event.getSeverity());
         URI location = URI.create("/api/v1/logs/" + event.getId());
         return ResponseEntity.created(location).body(new LogEventCreatedResponse(
                 event.getId(), event.getApplication().getId(), event.getFingerprint(), event.getCreatedAt()));

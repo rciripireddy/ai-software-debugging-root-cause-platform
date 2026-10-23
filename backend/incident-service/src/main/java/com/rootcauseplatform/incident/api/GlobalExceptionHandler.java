@@ -94,8 +94,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<Object> handleUnexpected(Exception ex, WebRequest request) {
+        // Unexpected: logged with the stack trace (error.stack_trace in the JSON logs). Expected
+        // rejections above are logged as one line without it.
         log.atError().setCause(ex).setMessage("Unhandled exception while processing request")
-                .addKeyValue("path", path(request)).log();
+                .addKeyValue("action", "http.unexpected_error")
+                .addKeyValue("method", request instanceof ServletWebRequest servletRequest
+                        ? servletRequest.getRequest().getMethod() : null)
+                .addKeyValue("path", path(request))
+                .addKeyValue("errorType", ex.getClass().getName())
+                .log();
         return respond(problem(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error",
                 "An unexpected error occurred. Quote the correlation ID when reporting this problem."), request);
     }

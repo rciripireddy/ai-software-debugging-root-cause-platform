@@ -7,12 +7,13 @@ It is built as a set of small services: Java/Spring Boot services for ingestion 
 processing, a Python service for analysis, Kafka for event streaming, PostgreSQL for storage and a
 React dashboard.
 
-> **Project status: Phase 6 — authentication and security hardening.**
+> **Project status: Phase 7 — Docker, monitoring, logging and runtime hardening.**
 > Log events are ingested, published reliably to Kafka and correlated into incidents
 > automatically. The analysis service suggests **potential** root causes with evidence, using
 > deterministic rules (no machine learning, no external AI service). The React dashboard shows
 > all of it from the real APIs after signing in, and can also run as a clearly labelled demo with
-> bundled synthetic data. See [Roadmap](#roadmap).
+> bundled synthetic data. The services run hardened in Docker with health checks, structured logs,
+> Prometheus metrics and a Grafana dashboard. See [Roadmap](#roadmap).
 
 ## What works today
 
@@ -62,8 +63,13 @@ React dashboard.
   API key for monitored applications and an internal service token for analysis-service's calls.
   Also rate limits for sign-in, events and analyses, request size limits, security headers and
   structured security logs.
-- **Docker Compose** environment with all services, PostgreSQL and a single-node Kafka broker
-  (KRaft), with health checks and persistent volumes.
+- **Production-style Docker runtime** (see [Runtime and observability](#runtime-and-observability)):
+  non-root containers with read-only file systems, separate networks, liveness and readiness
+  checks, log rotation, memory limits, graceful shutdown and automatic recovery after database,
+  Kafka or service outages.
+- **Observability**: JSON logs with one correlation ID from the dashboard proxy through every
+  service and Kafka, Prometheus metrics for requests, ingestion, outbox, Kafka processing,
+  analyses and connection pools, alert rules, and a provisioned Grafana dashboard.
 - **Demo data**: synthetic log events in [`sample-data/`](sample-data/) and a script that sends them
   and shows the incidents created from them; a **demo mode** of the dashboard
   (`npm run build:demo`) that serves bundled synthetic data without any backend.
@@ -116,9 +122,11 @@ Kafka messages. analysis-service runs on request and is not part of that pipelin
 ├── frontend/                  React + TypeScript + Vite dashboard
 ├── database/init/             PostgreSQL initialization (schemas)
 ├── sample-data/               Demo log events, a loader script, labelled analysis scenarios
-├── docs/                      Architecture, API, database, configuration and security notes
+├── monitoring/                Prometheus configuration and alert rules, Grafana provisioning and dashboard
+├── docs/                      Architecture, API, database, configuration, security and operations notes
 ├── screenshots/               Dashboard screenshots
-├── docker-compose.yml
+├── docker-compose.yml         Production-style runtime (dashboard, Prometheus and Grafana published)
+├── docker-compose.override.yml  Development ports for the services, PostgreSQL and Kafka
 └── .env.example               Template for local configuration
 ```
 
@@ -139,7 +147,8 @@ On Windows, Docker Desktop requires WSL 2.
 ```bash
 cp .env.example .env              # Windows PowerShell: Copy-Item .env.example .env
 # Edit .env: set POSTGRES_PASSWORD, AUTH_JWT_SECRET, INTERNAL_SERVICE_TOKEN, INGESTION_API_KEY
-# (random values, e.g. from: python -c "import secrets; print(secrets.token_urlsafe(48))")
+# and GRAFANA_ADMIN_PASSWORD (random values, e.g. from:
+#   python -c "import secrets; print(secrets.token_urlsafe(48))")
 # and AUTH_BOOTSTRAP_ADMIN_PASSWORD, the password of the first administrator (12+ characters).
 docker compose up -d --build
 docker compose ps                 # wait until every service reports "healthy"
@@ -158,16 +167,21 @@ their default ports.
 | URL | What |
 | --- | --- |
 | <http://localhost:3000> | **Dashboard**, after signing in (all APIs are also reachable through it under `/api/ingestion`, `/api/incident`, `/api/analysis`) |
+| <http://localhost:3001> | **Grafana** dashboard *Root Cause Platform* (view without signing in) |
+| <http://localhost:9090> | **Prometheus** (targets, metrics, alert rules) |
 | <http://localhost:8082/api/v1/auth/login> | Sign-in API (`POST`) |
 | <http://localhost:8081/api/v1/logs> | Log ingestion API (`POST` with `X-Api-Key`) |
 | <http://localhost:8082/api/v1/incidents> | Incident API |
-| <http://localhost:8081/actuator/health> | Ingestion service health |
-| <http://localhost:8082/actuator/health> | Incident service health |
 | <http://localhost:8000/api/v1/analysis/incidents/{id}> | Analysis API (`POST` to analyze, `GET` for the latest result) |
-| <http://localhost:8000/health> | Analysis service health |
 | <http://localhost:8000/docs> | Analysis service OpenAPI docs |
 
-Stop the stack with `docker compose down` (add `-v` to also delete the PostgreSQL and Kafka volumes).
+All ports are bound to `127.0.0.1`. The service ports (8081, 8082, 8000) and the PostgreSQL and
+Kafka ports are development ports from `docker-compose.override.yml`;
+`docker compose -f docker-compose.yml up -d` runs without them
+([docs/operations.md](docs/operations.md#ports)).
+
+Stop the stack with `docker compose down`; data is kept in volumes. `docker compose down -v`
+also deletes all data (PostgreSQL, Kafka, Prometheus, Grafana).
 
 ### Try it with demo data
 
@@ -219,15 +233,19 @@ topics, consumer lag and the outbox: [docs/events.md](docs/events.md#inspecting-
 
 ### Health check commands
 
-Health endpoints are public; everything else needs credentials.
+Health endpoints are public; everything else needs credentials. Liveness only says the process
+works; readiness says the service can do its work (its database is reachable). Kafka is part of
+neither, by design ([docs/operations.md](docs/operations.md#health-model)).
 
 ```bash
-curl http://localhost:8081/actuator/health
+curl http://localhost:8081/actuator/health/liveness
 curl http://localhost:8081/actuator/health/readiness   # includes the database connection
-curl http://localhost:8082/actuator/health
-curl http://localhost:8000/health
+curl http://localhost:8082/actuator/health/readiness
+curl http://localhost:8000/health/liveness
 curl http://localhost:8000/health/readiness             # includes the database connection
-curl http://localhost:3000/api/ingestion/actuator/health    # through the dashboard proxy
+curl http://localhost:3000/api/ingestion/actuator/health/readiness   # through the dashboard proxy
+curl http://localhost:8081/actuator/prometheus         # metrics (internal; not through the proxy)
+curl http://localhost:8000/metrics
 
 docker compose exec postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker compose exec kafka /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092
@@ -349,6 +367,36 @@ Taken from the running Docker stack with synthetic data (see [screenshots/](scre
 | --- | --- |
 | ![Sign-in page](screenshots/login.png) | ![Root Cause Analysis for a viewer, without the run button](screenshots/root-cause-analysis-viewer.png) |
 
+## Runtime and observability
+
+**Docker.** Eight containers: the dashboard (nginx), the three services, PostgreSQL, Kafka,
+Prometheus and Grafana. The application containers run as non-root users with a read-only file
+system, no Linux capabilities and a memory limit, on separate `frontend`, `backend` and
+`monitoring` networks, so the dashboard proxy and the monitoring tools cannot reach the database
+or Kafka. Images are multi-stage builds with exact dependency versions. Logs are rotated (3 x
+10 MB per container) and data lives in named volumes that survive `docker compose down`.
+
+**Health.** Every service has a liveness probe (the process works) and a readiness probe (its
+database is reachable); Docker health checks use readiness. A database outage marks the services
+`unhealthy` without restart loops, and they recover by themselves. A Kafka outage does not: events
+are still accepted and wait in the outbox.
+
+**Logs.** One JSON object per line (Elastic Common Schema) from every service and the nginx
+proxy, with service name, environment and a correlation ID that follows a request through the
+proxy, every service, Kafka and the analysis. Secrets and tokens are never logged; stack traces
+only for unexpected errors.
+
+**Metrics.** `/actuator/prometheus` (Spring services) and `/metrics` (analysis-service), internal
+only: request rate, errors and latency per route, events accepted, outbox backlog and publishing,
+Kafka messages by outcome (created, updated, duplicate, ...), retries and dead letters, analyses
+and their duration, connection pools and JVM memory.
+
+**Local monitoring.** Prometheus (<http://localhost:9090>) scrapes the services and evaluates
+alert rules; Grafana (<http://localhost:3001>) opens on a provisioned dashboard. Both are
+configured from [`monitoring/`](monitoring/) without manual setup and bound to `127.0.0.1`.
+
+Details, measured failure behaviour and troubleshooting: [docs/operations.md](docs/operations.md).
+
 ## Configuration
 
 All Docker Compose settings are read from `.env` (not committed). See
@@ -359,6 +407,7 @@ are set, and each service receives only the secrets it needs.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — components, request routing, health checks, logging
+- [docs/operations.md](docs/operations.md) — Docker runtime, start/stop, volumes, logs, health model, metrics, Prometheus/Grafana, failure recovery and troubleshooting
 - [docs/api.md](docs/api.md) — REST endpoints with examples and error format
 - [frontend/README.md](frontend/README.md) — dashboard pages, structure and commands
 - [docs/analysis.md](docs/analysis.md) — how incidents are analyzed: normalization, stack traces, rules, confidence, similarity, evaluation and limitations
@@ -376,8 +425,8 @@ are set, and each service receives only the secrets it needs.
 | 3 | Event streaming and correlation: transactional outbox, Kafka publishing, automatic and idempotent incident correlation, retries and dead-letter topic | Done |
 | 4 | Root cause analysis: rule-based analysis service with recurring patterns, related incidents and ranked potential causes with evidence | Done |
 | 5 | Dashboard integration: all pages on the real APIs, incidents and incident detail, analysis with evidence, demo mode | Done |
-| 6 | Authentication and security hardening: sign-in, roles, protected APIs, service credentials, CSRF, rate limits, security headers | **Current** |
-| 7 | Monitoring and operations polish | Planned |
+| 6 | Authentication and security hardening: sign-in, roles, protected APIs, service credentials, CSRF, rate limits, security headers | Done |
+| 7 | Docker, monitoring, logging and runtime hardening: hardened containers, health model, structured logs and correlation, Prometheus metrics, Grafana, failure recovery | **Current** |
 | 8 | CI/CD with GitHub Actions and a public dashboard preview on Cloudflare Pages | Planned |
 
 Scope of later phases may be refined as the project progresses.

@@ -1,0 +1,4 @@
+org.springframework.context.ApplicationListener=\
+com.rootcauseplatform.incident.config.RuntimeConfigurationValidator
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+com.rootcauseplatform.incident.config.InvalidConfigurationFailureAnalyzer

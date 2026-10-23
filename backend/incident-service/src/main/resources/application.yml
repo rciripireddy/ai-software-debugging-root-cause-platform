@@ -21,6 +21,18 @@ spring:
           time_zone: UTC
   flyway:
     schemas: incident
+    # Wait for PostgreSQL while it is still starting instead of failing the startup.
+    connect-retries: 12
+    connect-retries-interval: 10s
+  lifecycle:
+    # Graceful shutdown: in-flight requests and Kafka listeners get this long to finish.
+    timeout-per-shutdown-phase: 20s
+  task:
+    scheduling:
+      shutdown:
+        # A running scheduled task (e.g. an outbox batch) finishes before the pools close.
+        await-termination: true
+        await-termination-period: 10s
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     client-id: ${spring.application.name}
@@ -32,6 +44,9 @@ spring:
       # before incident-service first started is skipped.
       auto-offset-reset: earliest
     listener:
+      # Started by KafkaListenerStarter once the application is ready, with retries, so the
+      # service also starts while Kafka is unavailable.
+      auto-startup: false
       # Commit the offset after each successfully processed record.
       ack-mode: record
       # One consumer thread per partition of error-events.v1.
@@ -52,6 +67,8 @@ app:
         initial-interval: 1s
         multiplier: 2.0
         max-interval: 10s
+      # Retry interval for starting the listeners while Kafka is unavailable.
+      start-retry-interval: 10s
   correlation:
     # Events below this severity are recorded as processed but do not create incidents.
     minimum-severity: ${CORRELATION_MINIMUM_SEVERITY:ERROR}
@@ -89,25 +106,43 @@ server:
   # Client address and scheme from X-Forwarded-* headers set by the dashboard's nginx proxy
   # (trusted only from private network addresses).
   forward-headers-strategy: native
+  # Stop accepting requests on SIGTERM and let in-flight ones finish (see spring.lifecycle).
+  shutdown: graceful
 
 logging:
   pattern:
     # Plain-text format for local development. Docker enables JSON (ECS) output instead,
     # see LOGGING_STRUCTURED_FORMAT_CONSOLE in docker-compose.yml.
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{correlationId:-}] %-40.40logger{39} : %m %kvp%n%wEx"
+  structured:
+    ecs:
+      service:
+        # service.name comes from spring.application.name.
+        environment: ${APP_ENVIRONMENT:local}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:
         enabled: true
       group:
+        # Liveness: the process works and should not be restarted. Readiness: the service can do
+        # its work, which needs the database. Kafka is deliberately not part of either group
+        # (see docs/operations.md, "Health model").
+        liveness:
+          include: livenessState
         readiness:
           include: readinessState,db
+  metrics:
+    distribution:
+      # Fixed histogram buckets, the same as analysis-service's, so latency percentiles can be
+      # compared across services.
+      slo:
+        http.server.requests: 5ms,10ms,25ms,50ms,100ms,250ms,500ms,1s,2500ms,5s,10s
   info:
     env:
       enabled: true

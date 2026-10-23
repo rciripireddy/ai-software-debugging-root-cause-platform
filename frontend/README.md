@@ -14,7 +14,7 @@ and can also run as a self-contained demo with bundled synthetic data.
 | `/incidents` | Incidents: severity, status, service, occurrences, last seen and analysis state; filters for text, status, severity, application, service, environment | `GET /api/v1/incidents`, latest analyses |
 | `/incidents/:id` | Incident detail: key facts, likely root cause, most recent occurrence with stack trace, recent events (expand for source and stack trace) | incident, event details |
 | `/root-cause`, `/root-cause/:id` | Root Cause Analysis: incident picker; stored analysis or "Run analysis" (`ADMIN` only); likely cause with confidence, explanation, key evidence and limitations first; related incidents; other candidates; collapsed patterns, analysis details and history | analysis API |
-| `/health` | Service Health: live checks of the three services every 15 s | health endpoints |
+| `/health` | Service Health: readiness checks of the three services every 15 s ("Healthy" means the service can reach its database), with response time and last check | readiness endpoints |
 
 Filters and the page number are kept in the URL, so filtered views can be bookmarked.
 
@@ -87,3 +87,12 @@ npm run build:demo   # static demo build into dist-demo/ (no API calls)
 
 Configuration (API base paths, refresh intervals, timeouts): see
 [docs/configuration.md](../docs/configuration.md#dashboard).
+
+## Docker image
+
+The image serves the build with nginx (unprivileged, read-only file system) using
+[`nginx.conf`](nginx.conf): it proxies `/api/<service>/` to the services, sets the security
+headers, passes a validated `X-Correlation-Id` to the services and writes a JSON access log with
+the same correlation ID (no query strings, headers or bodies). Metrics and actuator endpoints
+other than health answer `404` through the proxy. See
+[docs/operations.md](../docs/operations.md#logs).

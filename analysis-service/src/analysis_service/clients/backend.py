@@ -14,6 +14,7 @@ from uuid import UUID
 import httpx
 
 from analysis_service.logging_config import correlation_id
+from analysis_service.metrics import Metrics
 from analysis_service.models.records import ApplicationRef, EventRecord, IncidentRecord
 
 log = logging.getLogger(__name__)
@@ -63,8 +64,10 @@ class BackendClient:
         incident_service_url: str,
         ingestion_service_url: str,
         max_concurrency: int,
+        metrics: Metrics | None = None,
     ) -> None:
         self._http = http
+        self._metrics = metrics or Metrics()
         self._incident_url = incident_service_url.rstrip("/")
         self._ingestion_url = ingestion_service_url.rstrip("/")
         self._limit = asyncio.Semaphore(max_concurrency)
@@ -96,6 +99,13 @@ class BackendClient:
         return _parse(INGESTION_SERVICE, lambda b: (b.get("stackTrace"), b.get("source")), body)
 
     async def _get(self, service: str, url: str, params: dict[str, Any] | None = None) -> Any:
+        try:
+            return await self._fetch(service, url, params)
+        except BackendUnavailableError:
+            self._metrics.backend_failed(service)
+            raise
+
+    async def _fetch(self, service: str, url: str, params: dict[str, Any] | None) -> Any:
         async with self._limit:
             try:
                 response = await self._http.get(url, params=params)

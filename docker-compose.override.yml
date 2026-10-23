@@ -1,0 +1,26 @@
+# Development ports, loaded automatically by `docker compose` together with docker-compose.yml.
+# They let the tests, the sample scripts and local tools reach the services, PostgreSQL and Kafka
+# directly, and are bound to 127.0.0.1 so they are not reachable from other machines. For the
+# production-style setup (dashboard, Prometheus and Grafana only), leave this file out:
+#   docker compose -f docker-compose.yml up -d
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  kafka:
+    ports:
+      - "127.0.0.1:${KAFKA_EXTERNAL_PORT:-9092}:9092"
+
+  ingestion-service:
+    ports:
+      - "127.0.0.1:${INGESTION_SERVICE_PORT:-8081}:8081"
+
+  incident-service:
+    ports:
+      - "127.0.0.1:${INCIDENT_SERVICE_PORT:-8082}:8082"
+
+  analysis-service:
+    ports:
+      - "127.0.0.1:${ANALYSIS_SERVICE_PORT:-8000}:8000"

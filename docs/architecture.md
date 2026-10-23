@@ -34,7 +34,7 @@ flowchart LR
 All three schemas live in the same PostgreSQL database (see [database.md](database.md#design-notes)).
 Event flow, contract and guarantees are described in [events.md](events.md).
 
-| Component | Responsibility (target) | Implemented so far (Phase 6) |
+| Component | Responsibility (target) | Implemented so far (Phase 7) |
 | --- | --- | --- |
 | `ingestion-service` | Accept, validate and persist log events; publish them to Kafka | REST API to store and read events, application registration, error fingerprinting, transactional outbox and Kafka publisher, `ingestion` schema migrations |
 | `incident-service` | Group errors into incidents automatically, detect recurring failures | Kafka consumer that correlates events into incidents (idempotent, with retries and a dead-letter topic), REST API to list/filter and retrieve incidents, deprecated manual creation, `incident` schema migrations; user accounts (`auth` schema), sign-in and access tokens |
@@ -42,6 +42,11 @@ Event flow, contract and guarantees are described in [events.md](events.md).
 | `frontend` | Dashboard for overview, error monitoring, root cause analysis and service health | Six pages on the real APIs: Overview (figures and charts), Error Monitoring, Incidents, incident detail, Root Cause Analysis (run and inspect analyses), Service Health; a demo mode with bundled synthetic data; sign-in page, session handling and role-based controls. See [Dashboard](#dashboard) |
 | PostgreSQL | Durable storage, one schema per service | Eight tables across the `ingestion`, `incident`, `auth` and `analysis` schemas, no foreign keys between them |
 | Kafka | Event stream between ingestion and incident processing | Single-node KRaft broker with `error-events.v1` and its dead-letter topic, 3 partitions each |
+| Prometheus | Collect the services' metrics | Scrapes `/actuator/prometheus` (Spring services) and `/metrics` (analysis-service) every 15 s; alert rules for unavailable services, outbox backlog, dead letters and server errors |
+| Grafana | Visualize the metrics | One provisioned dashboard: requests, errors, latency, ingestion, outbox, Kafka processing, analyses, connection pools |
+
+The containers, networks, health model, logs, metrics and failure behaviour are described in
+[operations.md](operations.md).
 
 Recurring failures are detected deterministically: repeated occurrences of the same fingerprint
 in the same application increase one incident's occurrence count. analysis-service then analyzes
@@ -103,9 +108,12 @@ analysis-service (Python, FastAPI) is organized the same way:
   line in [Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html) format;
   analysis-service does the same with `LOG_FORMAT=json`, using the same ECS field names.
   Locally the services log plain text with the same fields appended as `key="value"` pairs.
-- Every request gets a correlation ID (from the `X-Correlation-Id` header or generated). It is
-  added to every log record of that request and returned in the response header and in error
-  responses.
+- Every request gets a correlation ID (from the `X-Correlation-Id` header when it matches
+  `[A-Za-z0-9._:-]{1,128}`, otherwise generated). nginx applies the same rule and passes the ID
+  on, so the dashboard proxy's JSON access log and the services' logs share it. It is added to
+  every log record of that request and returned in the response header and in error responses.
+- Every line carries `service.name`, `service.version` and `service.environment`
+  (`APP_ENVIRONMENT`).
 - Business events are logged with an `action` field and identifiers, for example
   `action=log.ingest` with `eventId`, `applicationId`, `serviceName`, `fingerprint` and the
   event's own `eventTraceId`/`eventCorrelationId`, or `action=incident.create` with `incidentId`
@@ -123,8 +131,11 @@ analysis-service (Python, FastAPI) is organized the same way:
   forwards the request's `X-Correlation-Id` to incident-service and ingestion-service, so their
   request logs carry the same ID.
 - Log messages, stack traces and request bodies are not logged, since they may contain user
-  data. Database credentials are never logged. analysis-service writes a stack trace only for
-  unexpected errors (`http.unexpected_error`, HTTP 500).
+  data. Credentials, tokens, API keys and the `Authorization` header are never logged. All three
+  services write a stack trace only for unexpected errors (`action=http.unexpected_error`, with
+  method, path and error type, HTTP 500); expected failures are one line without it.
+- Docker keeps at most 3 × 10 MB of logs per container. See
+  [operations.md](operations.md#logs).
 
 ## Dashboard
 
@@ -177,12 +188,17 @@ services' rate limits and logs.
 
 | Component | Endpoint / command | Used by |
 | --- | --- | --- |
-| ingestion-service | `GET /actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (readiness includes the database connection); public, no credentials | Compose health check (readiness), dashboard |
-| incident-service | same as above on port 8082 | Compose health check (readiness), dashboard |
-| analysis-service | `GET /health` (liveness), `GET /health/readiness` (database connection) | Compose health check (readiness), dashboard (liveness) |
+| ingestion-service | `GET /actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` (readiness includes the database connection); public, no credentials | Compose health check (readiness), dashboard (readiness) |
+| incident-service | same as above on port 8082 | Compose health check (readiness), dashboard (readiness) |
+| analysis-service | `GET /health` and `/health/liveness` (liveness), `GET /health/readiness` (database connection) | Compose health check (readiness), dashboard (readiness) |
 | frontend | `GET /` | Compose health check |
 | PostgreSQL | `pg_isready` | Compose health check |
 | Kafka | `kafka-broker-api-versions.sh` | Compose health check |
+| Prometheus, Grafana | `/-/ready`, `/api/health` | Compose health check |
+
+Docker marks a container `unhealthy` when its readiness check fails but does not restart it; the
+services recover by themselves when the database returns. Containers restart only when their
+process exits (`restart: unless-stopped`).
 
 Readiness of both Spring Boot services includes the database but **not Kafka**, and liveness
 depends on neither:
